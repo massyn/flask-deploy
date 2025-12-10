@@ -137,6 +137,11 @@ echo "Log directory created: /var/log/$SLUG"
 
 # == Setup Python virtual environment
 echo "Setting up Python virtual environment..."
+
+# Ensure the working directory is owned by the current user
+echo "Setting ownership of working directory to current user..."
+sudo chown -R "$(whoami):$(whoami)" "$WORKING_DIR"
+
 cd "$WORKING_DIR" || exit 1
 
 if [ -d "venv" ]; then
