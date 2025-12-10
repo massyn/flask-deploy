@@ -79,7 +79,14 @@ if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
 fi
 
 SLUG="$1"
-WORKING_DIR="$2"
+
+# Convert working directory to absolute path
+if [ ! -d "$2" ]; then
+    echo "Error: Working directory does not exist: $2"
+    exit 1
+fi
+WORKING_DIR="$(cd "$2" && pwd)"
+
 SERVERNAMES="${3//;/ }"
 PORT="$4"
 
@@ -115,11 +122,6 @@ write_template() {
 
 # == Validate working directory
 echo "Validating working directory..."
-if [ ! -d "$WORKING_DIR" ]; then
-    echo "Error: Working directory does not exist: $WORKING_DIR"
-    exit 1
-fi
-
 if [ ! -f "$WORKING_DIR/requirements.txt" ]; then
     echo "Error: requirements.txt not found in: $WORKING_DIR"
     exit 1
