@@ -3,7 +3,7 @@ Description=Gunicorn instance to serve {{ SLUG }} app
 After=network.target
 
 [Service]
-User=www-data
+User={{ WEB_USER }}
 WorkingDirectory={{ WORKING_DIR }}
 Environment="PATH={{ WORKING_DIR }}/venv/bin"
 Environment="PYTHONPATH={{ WORKING_DIR }}"
