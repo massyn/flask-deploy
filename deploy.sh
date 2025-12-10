@@ -50,6 +50,20 @@ else
     echo "Python3 installed: $($PY --version)"
 fi
 
+# -- Ensure python3-venv is installed
+echo "Checking for python3-venv package..."
+if ! "$PY" -m venv --help &> /dev/null; then
+    echo "python3-venv not found. Installing..."
+    if [[ "$OS" == "ubuntu" ]]; then
+        sudo apt-get install -y python3-venv
+    elif [[ "$OS" == "amzn" ]]; then
+        sudo yum install -y python3-pip
+    fi
+    echo "python3-venv installed"
+else
+    echo "python3-venv is available"
+fi
+
 # -- Check the parameters - do we have what we need?
 
 # $1 - slug (what we call this app)
