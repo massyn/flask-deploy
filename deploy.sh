@@ -1,6 +1,9 @@
 #!/usr/bin/bash
 set -e  # Exit on any error
 
+# Save the script directory for template access
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # -- what is my OS?  is it ubuntu or amazon linux?  Anything else, we do not support
 if [ -f /etc/os-release ]; then
     . /etc/os-release
@@ -175,11 +178,11 @@ echo "Python environment setup complete"
 
 # == Configure gunicorn
 echo "Configuring gunicorn..."
-write_template templates/gunicorn_config.py.txt "$WORKING_DIR/gunicorn_config.py"
+write_template "$SCRIPT_DIR/templates/gunicorn_config.py.txt" "$WORKING_DIR/gunicorn_config.py"
 
 # == Configure nginx
 echo "Configuring nginx..."
-write_template templates/nginx.conf.txt "/etc/nginx/sites-enabled/$SLUG"
+write_template "$SCRIPT_DIR/templates/nginx.conf.txt" "/etc/nginx/sites-enabled/$SLUG"
 
 # Test nginx configuration
 if sudo nginx -t; then
@@ -192,7 +195,7 @@ fi
 
 # == Configure systemd
 echo "Configuring systemd service..."
-write_template templates/systemd.txt "/etc/systemd/system/$SLUG.service"
+write_template "$SCRIPT_DIR/templates/systemd.txt" "/etc/systemd/system/$SLUG.service"
 
 sudo systemctl daemon-reload
 sudo systemctl enable "$SLUG.service"
