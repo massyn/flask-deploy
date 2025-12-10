@@ -52,16 +52,18 @@ fi
 
 # -- Ensure python3-venv is installed
 echo "Checking for python3-venv package..."
-if ! "$PY" -m venv --help &> /dev/null; then
-    echo "python3-venv not found. Installing..."
-    if [[ "$OS" == "ubuntu" ]]; then
-        sudo apt-get install -y python3-venv
-    elif [[ "$OS" == "amzn" ]]; then
-        sudo yum install -y python3-pip
-    fi
-    echo "python3-venv installed"
-else
-    echo "python3-venv is available"
+
+# Get the Python version (e.g., 3.12)
+PY_VERSION=$("$PY" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+
+if [[ "$OS" == "ubuntu" ]]; then
+    echo "Installing python$PY_VERSION-venv..."
+    sudo apt-get install -y "python$PY_VERSION-venv"
+    echo "python$PY_VERSION-venv installed"
+elif [[ "$OS" == "amzn" ]]; then
+    echo "Installing python3 development tools..."
+    sudo yum install -y python3-pip
+    echo "Python development tools installed"
 fi
 
 # -- Check the parameters - do we have what we need?
