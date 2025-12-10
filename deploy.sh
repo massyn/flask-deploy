@@ -137,18 +137,19 @@ echo "Log directory created: /var/log/$SLUG"
 
 # == Setup Python virtual environment
 echo "Setting up Python virtual environment..."
-sudo chown -R www-data:www-data "$WORKING_DIR"
-
 cd "$WORKING_DIR" || exit 1
 
 if [ -d "venv" ]; then
     echo "Virtual environment already exists, removing old one..."
-    sudo rm -rf venv
+    rm -rf venv
 fi
 
-sudo -u www-data "$PY" -m venv venv
-sudo -u www-data venv/bin/pip install --upgrade pip
-sudo -u www-data venv/bin/pip install -r requirements.txt
+"$PY" -m venv venv
+venv/bin/pip install --upgrade pip
+venv/bin/pip install -r requirements.txt
+
+# Set permissions so www-data can read and execute
+chmod -R 755 "$WORKING_DIR"
 echo "Python environment setup complete"
 
 # == Configure gunicorn
