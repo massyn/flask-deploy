@@ -14,13 +14,16 @@ if [ -f /etc/os-release ]; then
     fi
     echo "Detected OS: $OS"
 
-    # Set the web server user based on OS
+    # Set the web server user and nginx config path based on OS
     if [[ "$OS" == "ubuntu" ]]; then
         WEB_USER="www-data"
+        NGINX_CONF_DIR="/etc/nginx/sites-enabled"
     elif [[ "$OS" == "amzn" ]]; then
         WEB_USER="nginx"
+        NGINX_CONF_DIR="/etc/nginx/conf.d"
     fi
     echo "Web server user: $WEB_USER"
+    echo "Nginx config directory: $NGINX_CONF_DIR"
 else
     echo "Error: Cannot detect OS. /etc/os-release not found."
     exit 1
@@ -200,7 +203,11 @@ write_template "$SCRIPT_DIR/templates/gunicorn_config.py.txt" "$WORKING_DIR/guni
 
 # == Configure nginx
 echo "Configuring nginx..."
-write_template "$SCRIPT_DIR/templates/nginx.conf.txt" "/etc/nginx/sites-enabled/$SLUG"
+
+# Set nginx config filename with .conf extension
+NGINX_CONFIG_FILE="$NGINX_CONF_DIR/$SLUG.conf"
+
+write_template "$SCRIPT_DIR/templates/nginx.conf.txt" "$NGINX_CONFIG_FILE"
 
 # Test nginx configuration
 if sudo nginx -t; then
