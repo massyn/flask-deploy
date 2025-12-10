@@ -1,0 +1,17 @@
+[Unit]
+Description=Gunicorn instance to serve {{ SLUG }} app
+After=network.target
+
+[Service]
+User={{ user }}
+WorkingDirectory={{ WORKING_DIR }}
+Environment="PATH={{ WORKING_DIR }}/venv/bin"
+Environment="PYTHONPATH={{ WORKING_DIR }}"
+ExecStart={{ WORKING_DIR }}/venv/bin/gunicorn -c gunicorn_config.py run:app
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/{{ SLUG }}/access.log
+StandardError=append:/var/log/{{ SLUG }}/error.log
+
+[Install]
+WantedBy=multi-user.target

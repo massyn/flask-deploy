@@ -1,0 +1,77 @@
+"""
+Gunicorn configuration file for production deployment.
+
+IMPORTANT: This configuration is for Linux/Unix production deployment only.
+For Windows development, use the Flask development server (run.py).
+
+This config sets up gunicorn with 3 worker processes, proper timeouts,
+and worker recycling to prevent memory leaks.
+"""
+import os
+import sys
+
+# Add current directory to Python path to ensure imports work
+sys.path.insert(0, os.path.dirname(__file__))
+
+wsgi_app = "run:app"
+
+
+def on_starting(server):
+    """
+    Called just after the master process is initialized.
+    This runs once when gunicorn starts, in the master process.
+    """
+    print("Gunicorn master process starting...")
+
+
+def on_reload(server):
+    """
+    Called when workers are reloaded.
+    """
+    print("Workers reloading...")
+
+
+def on_exit(server):
+    """
+    Called just before the master process exits.
+    """
+    print("Gunicorn master process shutting down...")
+
+
+# ============================================================================
+# Gunicorn Server Configuration
+# ============================================================================
+
+# Server Socket
+bind = "0.0.0.0:{{ PORT }}"
+backlog = 2048
+
+# Worker Processes
+workers = 3
+worker_class = "sync"
+worker_connections = 1000
+max_requests = 1000  # Restart workers after this many requests (prevents memory leaks)
+max_requests_jitter = 50  # Add randomness to max_requests to avoid all workers restarting at once
+timeout = 30
+keepalive = 2
+
+# Logging
+accesslog = "-"  # Log to stdout
+errorlog = "-"   # Log to stderr
+loglevel = "info"
+access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
+
+# Process Naming
+proc_name = "{{ SLUG }}"
+
+# Server Mechanics
+daemon = False  # Run in foreground (systemd manages daemonization)
+pidfile = None  # Don't create PID file (systemd manages this)
+user = None     # Don't change user (systemd handles this)
+group = None    # Don't change group (systemd handles this)
+tmp_upload_dir = None
+preload_app = True  # Load application code before worker processes are forked
+
+# SSL (if needed in future)
+# keyfile = None
+# certfile = None
