@@ -13,6 +13,14 @@ if [ -f /etc/os-release ]; then
         exit 1
     fi
     echo "Detected OS: $OS"
+
+    # Set the web server user based on OS
+    if [[ "$OS" == "ubuntu" ]]; then
+        WEB_USER="www-data"
+    elif [[ "$OS" == "amzn" ]]; then
+        WEB_USER="nginx"
+    fi
+    echo "Web server user: $WEB_USER"
 else
     echo "Error: Cannot detect OS. /etc/os-release not found."
     exit 1
@@ -134,6 +142,7 @@ write_template() {
         -e "s|{{ SERVER_NAMES }}|${SERVERNAMES}|g" \
         -e "s|{{ PORT }}|${PORT}|g" \
         -e "s|{{ PY }}|${PY}|g" \
+        -e "s|{{ WEB_USER }}|${WEB_USER}|g" \
         "$template_file" | sudo tee "$output_file" > /dev/null
 
     echo "Template processed successfully: $output_file"
@@ -151,7 +160,7 @@ echo "Working directory validated: $WORKING_DIR"
 # == Create the log directory
 echo "Creating log directory..."
 sudo mkdir -p "/var/log/$SLUG"
-sudo chown -R www-data:www-data "/var/log/$SLUG"
+sudo chown -R "$WEB_USER:$WEB_USER" "/var/log/$SLUG"
 echo "Log directory created: /var/log/$SLUG"
 
 # == Setup Python virtual environment
