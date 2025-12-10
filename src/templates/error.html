@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}Error {{ error_code }} - Flask Hello World{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-6">
+        <div class="text-center">
+            <h1 class="display-1 fw-bold text-danger">{{ error_code }}</h1>
+            <p class="lead mb-4">{{ error_message }}</p>
+            <a href="{{ url_for('index') }}" class="btn btn-primary">Go to Home</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

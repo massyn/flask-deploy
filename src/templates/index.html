@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Flask Hello World{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="text-center mb-5">
+            <h1 class="display-3 fw-bold mb-3">
+                <span class="text-primary">Hello</span>
+                <span class="text-secondary">World</span>
+            </h1>
+            <p class="lead text-muted">
+                Welcome to your Flask application with production-ready security features!
+            </p>
+        </div>
+
+        <div class="row g-4 mt-4">
+            <div class="col-md-6">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title text-primary">CSRF Protection</h5>
+                        <p class="card-text">
+                            All forms are protected with CSRF tokens to prevent cross-site request forgery attacks.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title text-primary">Rate Limiting</h5>
+                        <p class="card-text">
+                            Built-in rate limiting protects your application from abuse and ensures fair usage.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title text-primary">Bootstrap 5</h5>
+                        <p class="card-text">
+                            Modern, responsive UI built with the latest Bootstrap 5 framework.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title text-primary">Production Ready</h5>
+                        <p class="card-text">
+                            Configured for deployment with Gunicorn and environment-based configuration.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="text-center mt-5">
+            <a href="{{ url_for('about') }}" class="btn btn-primary btn-lg px-5">Learn More</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

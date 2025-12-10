@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}About - Flask Hello World{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <h1 class="display-4 fw-bold mb-4">About This Application</h1>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Flask Hello World</h5>
+                <p class="card-text">
+                    This is a production-ready Flask application template with built-in security features
+                    and modern best practices.
+                </p>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Features</h5>
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item">Flask-WTF for CSRF protection</li>
+                    <li class="list-group-item">Flask-Limiter for rate limiting</li>
+                    <li class="list-group-item">Environment-based configuration with python-dotenv</li>
+                    <li class="list-group-item">Bootstrap 5 responsive UI</li>
+                    <li class="list-group-item">Gunicorn for production deployment</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h5 class="card-title">Technology Stack</h5>
+                <p class="card-text mb-2"><strong>Backend:</strong> Flask 3.1.0, Python 3.x</p>
+                <p class="card-text mb-2"><strong>Frontend:</strong> Bootstrap 5.3.3, Jinja2</p>
+                <p class="card-text"><strong>Server:</strong> Gunicorn 23.0.0</p>
+            </div>
+        </div>
+
+        <div class="text-center mt-4">
+            <a href="{{ url_for('index') }}" class="btn btn-outline-primary">Back to Home</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
