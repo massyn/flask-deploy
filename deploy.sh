@@ -161,6 +161,15 @@ echo "Setting up Python virtual environment..."
 echo "Setting ownership of working directory to current user..."
 sudo chown -R "$(whoami):$(whoami)" "$WORKING_DIR"
 
+# Ensure parent directories are traversable by www-data
+# This allows systemd service running as www-data to cd into the directory
+echo "Setting execute permissions on parent directories..."
+CURRENT_PATH="$WORKING_DIR"
+while [ "$CURRENT_PATH" != "/" ]; do
+    sudo chmod o+x "$CURRENT_PATH"
+    CURRENT_PATH="$(dirname "$CURRENT_PATH")"
+done
+
 cd "$WORKING_DIR" || exit 1
 
 if [ -d "venv" ]; then
