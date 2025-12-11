@@ -194,7 +194,9 @@ venv/bin/pip install --upgrade pip
 venv/bin/pip install -r requirements.txt
 
 # Set permissions so www-data can read and execute
-chmod -R 755 "$WORKING_DIR"
+sudo chmod -R 755 "$WORKING_DIR"
+sudo chown -R "$WEB_USER:$WEB_USER" "$WORKING_DIR"
+
 echo "Python environment setup complete"
 
 # == Configure gunicorn
