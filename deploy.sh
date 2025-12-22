@@ -86,6 +86,7 @@ fi
 # $2 - working directory
 # $3 - servernames (; separated)
 # $4 - port
+# $5- cloudflare (default to off)
 
 show_help() {
     echo "Usage: $0 <slug> <working_directory> <servernames> <port>"
@@ -95,6 +96,7 @@ show_help() {
     echo "  working_directory - Full path to the application directory"
     echo "  servernames       - Server names separated by semicolons (e.g., 'example.com;www.example.com')"
     echo "  port              - Port number for the application"
+    echo "  cloudflare        - off (default), on or ssl"
     echo ""
     echo "Example:"
     echo "  $0 myapp /var/www/myapp 'example.com;www.example.com' 8000"
@@ -119,12 +121,38 @@ WORKING_DIR="$(cd "$2" && pwd)"
 
 SERVERNAMES="${3//;/ }"
 PORT="$4"
+CLOUDFLARE="${5:-off}"
+
+# Validate Cloudflare parameter
+if [[ "$CLOUDFLARE" != "off" && "$CLOUDFLARE" != "on" && "$CLOUDFLARE" != "ssl" ]]; then
+    echo "Error: Invalid Cloudflare parameter. Must be 'off', 'on', or 'ssl'."
+    echo ""
+    show_help
+fi
+
+# Validate SSL certificates exist if SSL mode is enabled
+if [[ "$CLOUDFLARE" == "ssl" ]]; then
+    CERT_PEM="/etc/certs/${SLUG}.pem"
+    CERT_KEY="/etc/certs/${SLUG}.priv"
+    if [ ! -f "$CERT_PEM" ]; then
+        echo "Error: SSL certificate file not found: $CERT_PEM"
+        echo "Please ensure SSL certificates are installed before using SSL mode."
+        exit 1
+    fi
+    if [ ! -f "$CERT_KEY" ]; then
+        echo "Error: SSL certificate key file not found: $CERT_KEY"
+        echo "Please ensure SSL certificates are installed before using SSL mode."
+        exit 1
+    fi
+    echo "SSL certificates validated: $CERT_PEM, $CERT_KEY"
+fi
 
 echo "Configuration:"
 echo "  Slug: $SLUG"
 echo "  Working Directory: $WORKING_DIR"
 echo "  Server Names: $SERVERNAMES"
 echo "  Port: $PORT"
+echo "  Cloudflare: $CLOUDFLARE"
 echo ""
 
 # Function to process template files and replace variables
@@ -146,6 +174,7 @@ write_template() {
         -e "s|{{ PORT }}|${PORT}|g" \
         -e "s|{{ PY }}|${PY}|g" \
         -e "s|{{ WEB_USER }}|${WEB_USER}|g" \
+        -e "s|{{ CLOUDFLARE_INCLUDE }}|${CLOUDFLARE_INCLUDE}|g" \
         "$template_file" | sudo tee "$output_file" > /dev/null
 
     echo "Template processed successfully: $output_file"
@@ -159,6 +188,36 @@ if [ ! -f "$WORKING_DIR/requirements.txt" ]; then
 fi
 
 echo "Working directory validated: $WORKING_DIR"
+
+# == Create the cloudflare block list (only if enabled and file is old/missing)
+CLOUDFLARE_INCLUDE=""
+if [[ "$CLOUDFLARE" == "on" ]]; then
+    OUT=/etc/nginx/cloudflare-allow.conf
+    UPDATE_CLOUDFLARE=false
+
+    if [ ! -f "$OUT" ]; then
+        UPDATE_CLOUDFLARE=true
+        echo "Cloudflare allow file does not exist, creating..."
+    else
+        # Check if file is older than 24 hours
+        if find "$OUT" -mtime +0 | grep -q "$OUT"; then
+            UPDATE_CLOUDFLARE=true
+            echo "Cloudflare allow file is older than 24 hours, updating..."
+        else
+            echo "Cloudflare allow file is up to date"
+        fi
+    fi
+
+    if [[ "$UPDATE_CLOUDFLARE" == "true" ]]; then
+        echo "# Generated on $(date -u)" > "$OUT"
+        curl -s https://www.cloudflare.com/ips-v4 | sed 's/^/allow /; s/$/;/' >> "$OUT"
+        curl -s https://www.cloudflare.com/ips-v6 | sed 's/^/allow /; s/$/;/' >> "$OUT"
+        echo "deny all;" >> "$OUT"
+        echo "Updated $OUT"
+    fi
+
+    CLOUDFLARE_INCLUDE="include /etc/nginx/cloudflare-allow.conf;"
+fi
 
 # == Create the log directory
 echo "Creating log directory..."
@@ -209,7 +268,14 @@ echo "Configuring nginx..."
 # Set nginx config filename with .conf extension
 NGINX_CONFIG_FILE="$NGINX_CONF_DIR/$SLUG.conf"
 
-write_template "$SCRIPT_DIR/templates/nginx.conf.txt" "$NGINX_CONFIG_FILE"
+# Choose nginx template based on Cloudflare setting
+if [[ "$CLOUDFLARE" == "ssl" ]]; then
+    NGINX_TEMPLATE="$SCRIPT_DIR/templates/nginx.ssl.conf.txt"
+else
+    NGINX_TEMPLATE="$SCRIPT_DIR/templates/nginx.conf.txt"
+fi
+
+write_template "$NGINX_TEMPLATE" "$NGINX_CONFIG_FILE"
 
 # Test nginx configuration
 if sudo nginx -t; then
