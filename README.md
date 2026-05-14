@@ -1,52 +1,142 @@
 # flask-deploy
 
-A deployment pattern to quickly deploy Python Flask applications to a Linux server using Gunicorn, systemd, and Nginx.
+A curl-able, self-contained bash script that deploys a Flask application to an Ubuntu/Debian server using Gunicorn, systemd, and Nginx. Idempotent — safe to run multiple times against the same slug.
 
-## How it works
-
-`deploy.sh` takes a Flask application directory and:
-
-1. Detects the OS (Ubuntu or Amazon Linux) and installs Nginx and Python 3 if needed
-2. Creates a Python virtual environment inside the app directory (`venv/`)
-3. Installs dependencies from `requirements.txt`
-4. Generates `gunicorn_config.py` from a template and writes it into the app directory
-5. Creates a systemd service that runs `gunicorn -c gunicorn_config.py run:app`
-6. Configures Nginx as a reverse proxy to the Gunicorn port
-
-## Usage
+## Quick start
 
 ```bash
-bash ./deploy.sh <slug> <working_directory> <servernames> <port> [cloudflare]
+curl -fsSL https://raw.githubusercontent.com/<user>/flask-deploy/main/deploy.sh \
+  | sudo bash -s -- --slug myapp --domain example.com --repo https://github.com/user/myapp
 ```
 
-| Parameter           | Required | Description |
-|---------------------|----------|-------------|
-| `slug`              | Yes      | Name/identifier for this application (used for service name, log directory) |
-| `working_directory` | Yes      | Path to the Flask application directory |
-| `servernames`       | Yes      | Semicolon-separated virtual hostnames (e.g. `example.com;www.example.com`) |
-| `port`              | Yes      | Port for Gunicorn to bind |
-| `cloudflare`        | No       | `off` (default), `on` (IP allowlist), or `ssl` (mutual TLS via `/etc/certs/<slug>.pem`) |
-
-Example:
+Or download and run directly:
 
 ```bash
-bash ./deploy.sh helloworld ./src hello.massyn.net;hello2.massyn.net 5001
+sudo bash deploy.sh --slug myapp --domain example.com --repo https://github.com/user/myapp
 ```
 
-## Flask application requirements
+## Parameters
 
-Any Flask application deployed with this tool **must** conform to the following structure. These constraints are baked into the deployment templates and are not optional.
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--slug` | Yes | App identifier — used for all directory and service naming |
+| `--domain` | Yes | Nginx `server_name` value(s), space-separated |
+| `--repo` | Yes | Git repository URL to clone |
+| `--password` | No | Enable HTTP basic auth (username: `admin`, password: `<value>`) |
+| `--cloudflare` | No | Flag — block all non-Cloudflare traffic using live IP ranges |
+| `--dry-run` | No | Flag — validate the repository only, no server changes |
 
-### Entry point: `run.py`
+## Examples
 
-- The main application file must be named **`run.py`** and placed at the **root of the application directory**.
-- Gunicorn is invoked as `run:app`, so `run.py` must expose a module-level variable named `app`:
+Basic deployment:
+
+```bash
+sudo bash deploy.sh \
+  --slug kickstand \
+  --domain kickstand.example.com \
+  --repo https://github.com/acme/kickstand
+```
+
+With HTTP basic auth:
+
+```bash
+sudo bash deploy.sh \
+  --slug kickstand \
+  --domain kickstand.example.com \
+  --repo https://github.com/acme/kickstand \
+  --password s3cr3tpassword
+```
+
+Behind Cloudflare (blocks all non-Cloudflare traffic):
+
+```bash
+sudo bash deploy.sh \
+  --slug kickstand \
+  --domain kickstand.example.com \
+  --repo https://github.com/acme/kickstand \
+  --cloudflare
+```
+
+Validate a repository without making any changes:
+
+```bash
+bash deploy.sh \
+  --slug kickstand \
+  --domain kickstand.example.com \
+  --repo https://github.com/acme/kickstand \
+  --dry-run
+```
+
+## Private repositories
+
+Private GitHub repositories are supported by embedding a Personal Access Token (PAT) in the `--repo` URL:
+
+```bash
+sudo bash deploy.sh \
+  --slug kickstand \
+  --domain kickstand.example.com \
+  --repo https://<token>@github.com/massyn/kickstand
+```
+
+The token is passed to `git clone` and stored in `/opt/<slug>/.git/config` on the server. Treat the server's `/opt/<slug>/` directory accordingly.
+
+**GitHub Actions example**
+
+Store the PAT as a repository secret (e.g. `DEPLOY_TOKEN`) and pass it at deploy time — never hardcode it in the workflow file:
+
+```yaml
+- name: Deploy
+  run: |
+    ssh user@server "sudo bash deploy.sh \
+      --slug kickstand \
+      --domain kickstand.example.com \
+      --repo https://${{ secrets.DEPLOY_TOKEN }}@github.com/massyn/kickstand"
+```
+
+**Security note**
+
+The PAT needs only the minimum required scope: **Contents: Read-only** (classic token: `repo` scope with read access, or a fine-grained token scoped to the specific repository with `Contents: Read-only`). Do not grant write access, workflow permissions, or organisation-level scopes.
+
+## Directory conventions
+
+| Path | Purpose |
+|------|---------|
+| `/opt/<slug>/` | Git clone of the repository — disposable, never back this up |
+| `/data/<slug>/` | Stateful data — SQLite databases, `.env` files — **back this up** |
+| `/var/log/<slug>/` | Logs — `access.log`, `error.log` (gunicorn), `nginx.access.log`, `nginx.error.log` |
+
+The port Gunicorn binds to is an internal implementation detail assigned automatically (starting from 5000, incrementing by 1 per new app). It is bound to `127.0.0.1` only and never exposed directly.
+
+## Dry-run output
+
+```
+[✓] run.py found
+[✓] requirements.txt found
+[✓] gunicorn in requirements.txt
+[✓] app object found in run.py
+[!] .env missing
+[!] DATABASE_URL not pointing to /data/kickstand/ — if your db gets hosed on redeploy, you had fair warning
+```
+
+`[✗]` items cause a non-zero exit. `[!]` items are warnings that do not block the run.
+
+## Flask app contract
+
+The deploy script expects the following in the root of the cloned repository.
+
+### Required files
+
+#### `run.py`
+
+Must be present at the repository root. Must expose a module-level variable named `app`:
 
 ```python
 app = Flask(__name__)
 ```
 
-- `run.py` must contain an `if __name__ == '__main__'` block so that `python ./run.py` starts the Flask development server directly — no other tooling required:
+Gunicorn is invoked as `gunicorn run:app` — the filename and variable name are fixed.
+
+Include an `if __name__ == '__main__'` block for local development:
 
 ```python
 if __name__ == '__main__':
@@ -57,25 +147,35 @@ if __name__ == '__main__':
     )
 ```
 
-This is the supported development workflow. `flask run` is not used.
+#### `requirements.txt`
 
-### `requirements.txt`
+Must be at the repository root. Must list `gunicorn`.
 
-- Must be at the **root of the application directory** — `deploy.sh` validates its presence and installs from it.
-- `gunicorn` must be listed — it is installed into the venv and invoked directly by systemd.
+### Recommended files
 
-### Configuration
+#### `.env`
 
-- Load environment variables from `.env` using `python-dotenv` at the top of `run.py`.
-- `SECRET_KEY` must come from an environment variable. A labelled dev fallback is acceptable; never hardcode a production value.
-- `FLASK_HOST`, `FLASK_PORT`, and `FLASK_DEBUG` are only used in the `__main__` block. In production, Gunicorn controls binding.
+Place secrets and environment-specific config here. The deploy script warns if it is absent.
 
-### Files generated by deploy.sh (do not commit)
+If your app uses a SQLite database, point `DATABASE_URL` at `/data/<slug>/` so it survives redeployment:
 
-| File                 | Description |
-|----------------------|-------------|
-| `gunicorn_config.py` | Generated from `templates/gunicorn_config.py.txt` at deploy time — will be overwritten |
-| `venv/`              | Python virtual environment created by the deploy script |
+```
+DATABASE_URL=sqlite:////data/kickstand/app.db
+SECRET_KEY=your-secret-key-here
+```
+
+The `/data/<slug>/` directory is created by the deploy script and is never wiped on redeploy.
+
+Do not commit `.env` to the repository.
+
+### Files generated by deploy.sh
+
+These are written into `/opt/<slug>/` on every deploy. Do not commit them:
+
+| File | Description |
+|------|-------------|
+| `gunicorn_config.py` | Gunicorn settings — overwritten on each run |
+| `venv/` | Python virtual environment — rebuilt if missing |
 
 Add both to `.gitignore`.
 
@@ -83,44 +183,39 @@ Add both to `.gitignore`.
 
 ```
 my-app/
-├── run.py              # Entry point — exposes `app`, includes __main__ block
+├── run.py              # Entry point — exposes `app`
 ├── requirements.txt    # Must include gunicorn
-├── .env                # Local secrets and config — do not commit
+├── .env                # Secrets — do not commit
 ├── .gitignore          # Exclude venv/, gunicorn_config.py, .env
-├── static/             # Static assets
+├── static/             # Static assets (optional)
 └── templates/          # Jinja2 HTML templates
     └── base.html       # Base layout — all pages extend this
 ```
 
-For larger apps, use Flask Blueprints. Register them in `run.py`, which remains wiring-only (no business logic).
+### Templates and routes
 
-### Templates and UI
+- All HTML via Jinja2 templates — never build HTML strings in Python.
+- Use template inheritance: `base.html` defines layout; all pages extend it.
+- Use Bootstrap 5 (CDN) for styling.
+- Route handlers are thin: validate input, call service functions, return `render_template()`.
+- Use `url_for()` for all internal links — never hardcode paths.
 
-- All HTML must use Jinja2 templates — never build HTML strings in Python or use `render_template_string` with raw markup.
-- Use template inheritance: `base.html` defines layout and navigation; all pages extend it.
-- Use Bootstrap 5 (CDN) for styling unless the project specifies otherwise.
-- Templates handle presentation only — no business rules, no data transformation.
-
-### Routes
-
-- Route handlers validate input, call service functions, and return `render_template()`. No business logic in routes.
-- Use `url_for()` for all internal links and static asset references — never hardcode paths.
-- Use `flask.flash()` for user feedback messages, rendered in templates.
-
-## Development workflow
+## Local development
 
 ```bash
-cd my-app
 python -m venv venv
-source venv/bin/activate      # Linux/macOS
-venv\Scripts\activate         # Windows
+source venv/bin/activate   # Linux/macOS
+venv\Scripts\activate      # Windows
 pip install -r requirements.txt
 python ./run.py
 ```
 
-The app runs at `http://localhost:5000` via Flask's built-in development server. Gunicorn is only used in production.
+The app runs at `http://localhost:5000` via Flask's development server. Gunicorn is used in production only.
 
 ## Prerequisites
 
-- Ubuntu or Amazon Linux
-- Must be run with sudo privileges for systemd and Nginx configuration
+- Ubuntu or Debian
+- `sudo` access for systemd and Nginx configuration
+- `git` available on the server (for clone/pull)
+
+The script installs `nginx`, `python3-venv`, and (when `--password` is used) `apache2-utils` if they are not already present. It checks before installing and does not run `apt-get` unnecessarily.

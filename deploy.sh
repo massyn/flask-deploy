@@ -1,306 +1,341 @@
-#!/usr/bin/bash
-set -e  # Exit on any error
+#!/usr/bin/env bash
+# deploy.sh — self-contained Flask/Gunicorn/Nginx deployment
+# Ubuntu/Debian only. Idempotent — safe to re-run against the same slug.
+set -eo pipefail
 
-# Save the script directory for template access
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ============================================================
+# Argument parsing
+# ============================================================
 
-# -- what is my OS?  is it ubuntu or amazon linux?  Anything else, we do not support
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    OS=$ID
-    if [[ "$OS" != "ubuntu" && "$OS" != "amzn" ]]; then
-        echo "Error: Unsupported OS. Only Ubuntu and Amazon Linux are supported."
-        exit 1
-    fi
-    echo "Detected OS: $OS"
+SLUG=""
+DOMAIN=""
+REPO=""
+PASS=""
+CLOUDFLARE=false
+DRY_RUN=false
 
-    # Set the web server user and nginx config path based on OS
-    if [[ "$OS" == "ubuntu" ]]; then
-        WEB_USER="www-data"
-        NGINX_CONF_DIR="/etc/nginx/sites-enabled"
-    elif [[ "$OS" == "amzn" ]]; then
-        WEB_USER="nginx"
-        NGINX_CONF_DIR="/etc/nginx/conf.d"
-    fi
-    echo "Web server user: $WEB_USER"
-    echo "Nginx config directory: $NGINX_CONF_DIR"
-else
-    echo "Error: Cannot detect OS. /etc/os-release not found."
-    exit 1
-fi
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") --slug <slug> --domain <domain> --repo <url> [options]
 
-# -- Is nginx installed?  If not, install it (enable the service, and start it)
-if ! command -v nginx &> /dev/null; then
-    echo "nginx not found. Installing..."
-    if [[ "$OS" == "ubuntu" ]]; then
-        sudo apt-get update
-        sudo apt-get install -y nginx
-    elif [[ "$OS" == "amzn" ]]; then
-        sudo yum install -y nginx
-    fi
-    sudo systemctl enable nginx
-    sudo systemctl start nginx
-    echo "nginx installed and started."
-else
-    echo "nginx is already installed."
-fi
+Required:
+  --slug      App identifier (used for all directory and service naming)
+  --domain    Nginx server_name value(s), space-separated
+  --repo      Git repository URL to clone
 
-# -- Is Python3 installed?  If not, install it.  set the PY variable to either `python` or `python3` (as some OS's are funny)
-if command -v python3 &> /dev/null; then
-    PY="python3"
-    echo "Python3 found: $(python3 --version)"
-elif command -v python &> /dev/null && [[ $(python --version 2>&1) == *"Python 3"* ]]; then
-    PY="python"
-    echo "Python found: $(python --version)"
-else
-    echo "Python3 not found. Installing..."
-    if [[ "$OS" == "ubuntu" ]]; then
-        sudo apt-get update
-        sudo apt-get install -y python3 python3-pip python3-venv
-    elif [[ "$OS" == "amzn" ]]; then
-        sudo yum install -y python3 python3-pip
-    fi
-    PY="python3"
-    echo "Python3 installed: $($PY --version)"
-fi
+Optional:
+  --password    Enable HTTP basic auth (username: admin, password: <value>)
+  --cloudflare  Block non-Cloudflare traffic using live IP ranges
+  --dry-run     Validate the repository only; no server changes
 
-# -- Ensure python3-venv is installed
-echo "Checking for python3-venv package..."
-
-# Get the Python version (e.g., 3.12)
-PY_VERSION=$("$PY" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-
-if [[ "$OS" == "ubuntu" ]]; then
-    echo "Installing python$PY_VERSION-venv..."
-    sudo apt-get install -y "python$PY_VERSION-venv"
-    echo "python$PY_VERSION-venv installed"
-elif [[ "$OS" == "amzn" ]]; then
-    echo "Installing python3 development tools..."
-    sudo yum install -y python3-pip
-    echo "Python development tools installed"
-fi
-
-# -- Check the parameters - do we have what we need?
-
-# $1 - slug (what we call this app)
-# $2 - working directory
-# $3 - servernames (; separated)
-# $4 - port
-# $5- cloudflare (default to off)
-
-show_help() {
-    echo "Usage: $0 <slug> <working_directory> <servernames> <port>"
-    echo ""
-    echo "Parameters:"
-    echo "  slug              - Name/identifier for this application"
-    echo "  working_directory - Full path to the application directory"
-    echo "  servernames       - Server names separated by semicolons (e.g., 'example.com;www.example.com')"
-    echo "  port              - Port number for the application"
-    echo "  cloudflare        - off (default), on or ssl"
-    echo ""
-    echo "Example:"
-    echo "  $0 myapp /var/www/myapp 'example.com;www.example.com' 8000"
+EOF
     exit 1
 }
 
-# Validate all parameters are provided
-if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ] || [ -z "$4" ]; then
-    echo "Error: Missing required parameters."
-    echo ""
-    show_help
-fi
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --slug)       SLUG="$2";       shift 2 ;;
+        --domain)     DOMAIN="$2";     shift 2 ;;
+        --repo)       REPO="$2";       shift 2 ;;
+        --password)   PASS="$2";       shift 2 ;;
+        --cloudflare) CLOUDFLARE=true; shift ;;
+        --dry-run)    DRY_RUN=true;    shift ;;
+        -h|--help)    usage ;;
+        *) echo "Unknown option: $1"; usage ;;
+    esac
+done
 
-SLUG="$1"
+[[ -z "$SLUG"   ]] && { echo "Error: --slug is required";   usage; }
+[[ -z "$DOMAIN" ]] && { echo "Error: --domain is required"; usage; }
+[[ -z "$REPO"   ]] && { echo "Error: --repo is required";   usage; }
 
-# Convert working directory to absolute path
-if [ ! -d "$2" ]; then
-    echo "Error: Working directory does not exist: $2"
-    exit 1
-fi
-WORKING_DIR="$(cd "$2" && pwd)"
+APP_DIR="/opt/${SLUG}"
+DATA_DIR="/data/${SLUG}"
+LOG_DIR="/var/log/${SLUG}"
+VENV="${APP_DIR}/venv"
+SLUG_CONF="/etc/nginx/sites-available/${SLUG}.conf"
 
-SERVERNAMES="${3//;/ }"
-PORT="$4"
-CLOUDFLARE="${5:-off}"
+# ============================================================
+# Dry-run mode — validate repo, no server changes
+# ============================================================
 
-# Validate Cloudflare parameter
-if [[ "$CLOUDFLARE" != "off" && "$CLOUDFLARE" != "on" && "$CLOUDFLARE" != "ssl" ]]; then
-    echo "Error: Invalid Cloudflare parameter. Must be 'off', 'on', or 'ssl'."
-    echo ""
-    show_help
-fi
+if [[ "$DRY_RUN" == "true" ]]; then
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
 
-# Validate SSL certificates exist if SSL mode is enabled
-if [[ "$CLOUDFLARE" == "ssl" ]]; then
-    CERT_PEM="/etc/certs/${SLUG}.pem"
-    CERT_KEY="/etc/certs/${SLUG}.priv"
-    if [ ! -f "$CERT_PEM" ]; then
-        echo "Error: SSL certificate file not found: $CERT_PEM"
-        echo "Please ensure SSL certificates are installed before using SSL mode."
-        exit 1
-    fi
-    if [ ! -f "$CERT_KEY" ]; then
-        echo "Error: SSL certificate key file not found: $CERT_KEY"
-        echo "Please ensure SSL certificates are installed before using SSL mode."
-        exit 1
-    fi
-    echo "SSL certificates validated: $CERT_PEM, $CERT_KEY"
-fi
-
-echo "Configuration:"
-echo "  Slug: $SLUG"
-echo "  Working Directory: $WORKING_DIR"
-echo "  Server Names: $SERVERNAMES"
-echo "  Port: $PORT"
-echo "  Cloudflare: $CLOUDFLARE"
-echo ""
-
-# Function to process template files and replace variables
-write_template() {
-    local template_file="$1"
-    local output_file="$2"
-
-    if [ ! -f "$template_file" ]; then
-        echo "Error: Template file not found: $template_file"
+    echo "Cloning ${REPO} for validation..."
+    if ! git clone --quiet "$REPO" "$TMP" 2>/dev/null; then
+        echo "[✗] Failed to clone repository: ${REPO}"
         exit 1
     fi
 
-    echo "Processing template: $template_file -> $output_file"
+    FAIL=false
 
-    # Read template, replace variables, and write to output
-    sed -e "s|{{ SLUG }}|${SLUG}|g" \
-        -e "s|{{ WORKING_DIR }}|${WORKING_DIR}|g" \
-        -e "s|{{ SERVER_NAMES }}|${SERVERNAMES}|g" \
-        -e "s|{{ PORT }}|${PORT}|g" \
-        -e "s|{{ PY }}|${PY}|g" \
-        -e "s|{{ WEB_USER }}|${WEB_USER}|g" \
-        -e "s|{{ CLOUDFLARE_INCLUDE }}|${CLOUDFLARE_INCLUDE}|g" \
-        "$template_file" | sudo tee "$output_file" > /dev/null
-
-    echo "Template processed successfully: $output_file"
-}
-
-# == Validate working directory
-echo "Validating working directory..."
-if [ ! -f "$WORKING_DIR/requirements.txt" ]; then
-    echo "Error: requirements.txt not found in: $WORKING_DIR"
-    exit 1
-fi
-
-echo "Working directory validated: $WORKING_DIR"
-
-# == Create the cloudflare block list (only if enabled and file is old/missing)
-CLOUDFLARE_INCLUDE=""
-if [[ "$CLOUDFLARE" == "on" ]]; then
-    OUT=/etc/nginx/cloudflare-allow.conf
-    UPDATE_CLOUDFLARE=false
-
-    if [ ! -f "$OUT" ]; then
-        UPDATE_CLOUDFLARE=true
-        echo "Cloudflare allow file does not exist, creating..."
+    if [[ -f "${TMP}/run.py" ]]; then
+        echo "[✓] run.py found"
     else
-        # Check if file is older than 24 hours
-        if find "$OUT" -mtime +0 | grep -q "$OUT"; then
-            UPDATE_CLOUDFLARE=true
-            echo "Cloudflare allow file is older than 24 hours, updating..."
-        else
-            echo "Cloudflare allow file is up to date"
+        echo "[✗] run.py missing"
+        FAIL=true
+    fi
+
+    if [[ -f "${TMP}/requirements.txt" ]]; then
+        echo "[✓] requirements.txt found"
+    else
+        echo "[✗] requirements.txt missing"
+        FAIL=true
+    fi
+
+    if [[ -f "${TMP}/requirements.txt" ]] && grep -qi "^gunicorn" "${TMP}/requirements.txt"; then
+        echo "[✓] gunicorn in requirements.txt"
+    else
+        echo "[✗] gunicorn not found in requirements.txt"
+        FAIL=true
+    fi
+
+    if [[ -f "${TMP}/run.py" ]] && grep -qE "(^|\s)app\s*=\s*Flask" "${TMP}/run.py"; then
+        echo "[✓] app object found in run.py"
+    else
+        echo "[✗] app object not found in run.py"
+        FAIL=true
+    fi
+
+    if [[ ! -f "${TMP}/.env" ]]; then
+        echo "[!] .env missing"
+    else
+        DB=$(grep -i "^DATABASE_URL" "${TMP}/.env" | cut -d= -f2- || true)
+        if [[ -n "$DB" && "$DB" != *"/data/${SLUG}/"* ]]; then
+            echo "[!] DATABASE_URL not pointing to /data/${SLUG}/ — if your db gets hosed on redeploy, you had fair warning"
         fi
     fi
 
-    if [[ "$UPDATE_CLOUDFLARE" == "true" ]]; then
-        echo "# Generated on $(date -u)" > "$OUT"
-        curl -s https://www.cloudflare.com/ips-v4 | sed 's/^/allow /; s/$/;/' >> "$OUT"
-        curl -s https://www.cloudflare.com/ips-v6 | sed 's/^/allow /; s/$/;/' >> "$OUT"
-        echo "deny all;" >> "$OUT"
-        echo "Updated $OUT"
+    if [[ "$FAIL" == "true" ]]; then
+        exit 1
     fi
 
-    CLOUDFLARE_INCLUDE="include /etc/nginx/cloudflare-allow.conf;"
+    echo "[✓] All checks passed"
+    exit 0
 fi
 
-# == Create the log directory
-echo "Creating log directory..."
-sudo mkdir -p "/var/log/$SLUG"
-sudo chown -R "$WEB_USER:$WEB_USER" "/var/log/$SLUG"
-echo "Log directory created: /var/log/$SLUG"
+# ============================================================
+# Prerequisites
+# ============================================================
 
-# == Setup Python virtual environment
-echo "Setting up Python virtual environment..."
-
-# Ensure the working directory is owned by the current user
-echo "Setting ownership of working directory to current user..."
-sudo chown -R "$(whoami):$(whoami)" "$WORKING_DIR"
-
-# Ensure parent directories are traversable by www-data
-# This allows systemd service running as www-data to cd into the directory
-echo "Setting execute permissions on parent directories..."
-CURRENT_PATH="$WORKING_DIR"
-while [ "$CURRENT_PATH" != "/" ]; do
-    sudo chmod o+x "$CURRENT_PATH"
-    CURRENT_PATH="$(dirname "$CURRENT_PATH")"
-done
-
-cd "$WORKING_DIR" || exit 1
-
-if [ -d "venv" ]; then
-    echo "Virtual environment already exists, removing old one..."
-    rm -rf venv
-fi
-
-"$PY" -m venv venv
-venv/bin/pip install --upgrade pip
-venv/bin/pip install -r requirements.txt
-
-# Set permissions so www-data can read and execute
-sudo chmod -R 755 "$WORKING_DIR"
-sudo chown -R "$WEB_USER:$WEB_USER" "$WORKING_DIR"
-
-echo "Python environment setup complete"
-
-# == Configure gunicorn
-echo "Configuring gunicorn..."
-write_template "$SCRIPT_DIR/templates/gunicorn_config.py.txt" "$WORKING_DIR/gunicorn_config.py"
-
-# == Configure nginx
-echo "Configuring nginx..."
-
-# Set nginx config filename with .conf extension
-NGINX_CONFIG_FILE="$NGINX_CONF_DIR/$SLUG.conf"
-
-# Choose nginx template based on Cloudflare setting
-if [[ "$CLOUDFLARE" == "ssl" ]]; then
-    NGINX_TEMPLATE="$SCRIPT_DIR/templates/nginx.ssl.conf.txt"
-else
-    NGINX_TEMPLATE="$SCRIPT_DIR/templates/nginx.conf.txt"
-fi
-
-write_template "$NGINX_TEMPLATE" "$NGINX_CONFIG_FILE"
-
-# Test nginx configuration
-if sudo nginx -t; then
-    sudo systemctl restart nginx
-    echo "Nginx configured and restarted successfully"
-else
-    echo "Error: Nginx configuration test failed"
+if ! command -v apt-get &>/dev/null; then
+    echo "Error: apt-get not found — Ubuntu/Debian required."
     exit 1
 fi
 
-# == Configure systemd
-echo "Configuring systemd service..."
-write_template "$SCRIPT_DIR/templates/systemd.txt" "/etc/systemd/system/$SLUG.service"
+if ! command -v nginx &>/dev/null; then
+    echo "Installing nginx..."
+    sudo apt-get install -y -q nginx
+fi
+sudo systemctl enable nginx
+sudo systemctl start nginx 2>/dev/null || true
+
+if ! python3 -c "import venv" 2>/dev/null; then
+    echo "Installing python3-venv..."
+    sudo apt-get install -y -q python3-venv
+fi
+
+if [[ -n "$PASS" ]] && ! command -v htpasswd &>/dev/null; then
+    echo "Installing apache2-utils..."
+    sudo apt-get install -y -q apache2-utils
+fi
+
+# ============================================================
+# Port assignment
+# ============================================================
+
+PORT=""
+
+# Reuse the existing port for this slug if already deployed
+if [[ -f "$SLUG_CONF" ]]; then
+    PORT=$(grep -oP 'proxy_pass\s+http://127\.0\.0\.1:\K[0-9]+' "$SLUG_CONF" 2>/dev/null | head -1 || true)
+fi
+
+# Assign a new port by finding the highest already in use
+if [[ -z "$PORT" ]]; then
+    HIGHEST=4999
+    while IFS= read -r -d '' conf; do
+        p=$(grep -oP 'proxy_pass\s+http://127\.0\.0\.1:\K[0-9]+' "$conf" 2>/dev/null | head -1 || true)
+        if [[ -n "$p" ]] && (( p > HIGHEST )); then
+            HIGHEST=$p
+        fi
+    done < <(find /etc/nginx/sites-available -name '*.conf' -print0 2>/dev/null)
+    PORT=$(( HIGHEST + 1 ))
+fi
+
+echo "Port: ${PORT} (internal, localhost only)"
+
+# ============================================================
+# Directories
+# ============================================================
+
+sudo mkdir -p "$APP_DIR" "$DATA_DIR" "$LOG_DIR"
+sudo chown www-data:www-data "$DATA_DIR" "$LOG_DIR"
+
+# ============================================================
+# Git clone / pull
+# ============================================================
+
+if [[ -d "${APP_DIR}/.git" ]]; then
+    echo "Pulling latest changes..."
+    sudo git -C "$APP_DIR" fetch --quiet
+    sudo git -C "$APP_DIR" reset --hard FETCH_HEAD
+else
+    echo "Cloning repository..."
+    sudo git clone --quiet "$REPO" "$APP_DIR"
+fi
+
+# ============================================================
+# Python venv and dependencies
+# ============================================================
+
+if [[ ! -d "$VENV" ]]; then
+    sudo python3 -m venv "$VENV"
+fi
+
+sudo "${VENV}/bin/pip" install --quiet --upgrade pip
+sudo "${VENV}/bin/pip" install --quiet -r "${APP_DIR}/requirements.txt"
+
+# Allow www-data to read and execute the app directory
+sudo chown -R www-data:www-data "$APP_DIR"
+
+# ============================================================
+# HTTP basic auth
+# ============================================================
+
+if [[ -n "$PASS" ]]; then
+    sudo mkdir -p /etc/nginx/.htpasswd
+    printf '%s' "$PASS" | sudo htpasswd -ci /etc/nginx/.htpasswd/"${SLUG}" admin
+fi
+
+# ============================================================
+# Cloudflare IP allowlist
+# ============================================================
+
+CF_CONF=/etc/nginx/cloudflare-allow.conf
+
+if [[ "$CLOUDFLARE" == "true" ]]; then
+    {
+        echo "# Cloudflare IPs — generated $(date -u)"
+        curl -sf https://www.cloudflare.com/ips-v4 | sed 's/^/allow /; s/$/;/'
+        curl -sf https://www.cloudflare.com/ips-v6 | sed 's/^/allow /; s/$/;/'
+        echo "deny all;"
+    } | sudo tee "$CF_CONF" > /dev/null
+    echo "Cloudflare IP allowlist updated."
+fi
+
+# ============================================================
+# Gunicorn config
+# ============================================================
+
+sudo tee "${APP_DIR}/gunicorn_config.py" > /dev/null <<GUNICORN_CFG
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+wsgi_app = "run:app"
+bind = "127.0.0.1:${PORT}"
+workers = 3
+worker_class = "sync"
+max_requests = 1000
+max_requests_jitter = 50
+timeout = 30
+keepalive = 2
+proc_name = "${SLUG}"
+daemon = False
+preload_app = True
+accesslog = "-"
+errorlog = "-"
+loglevel = "info"
+GUNICORN_CFG
+
+# ============================================================
+# Systemd service
+# ============================================================
+
+sudo tee "/etc/systemd/system/${SLUG}.service" > /dev/null <<SYSTEMD_UNIT
+[Unit]
+Description=Gunicorn — ${SLUG}
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=${APP_DIR}
+Environment=PATH=${VENV}/bin
+ExecStart=${VENV}/bin/gunicorn -c gunicorn_config.py run:app
+Restart=always
+RestartSec=5
+StandardOutput=append:${LOG_DIR}/access.log
+StandardError=append:${LOG_DIR}/error.log
+
+[Install]
+WantedBy=multi-user.target
+SYSTEMD_UNIT
+
+# ============================================================
+# Nginx config
+# ============================================================
+
+AUTH_DIRECTIVES=""
+if [[ -n "$PASS" ]]; then
+    AUTH_DIRECTIVES="
+        auth_basic \"Restricted\";
+        auth_basic_user_file /etc/nginx/.htpasswd/${SLUG};"
+fi
+
+CF_DIRECTIVE=""
+if [[ "$CLOUDFLARE" == "true" ]]; then
+    CF_DIRECTIVE="
+        include ${CF_CONF};"
+fi
+
+sudo tee "$SLUG_CONF" > /dev/null <<NGINX_CONF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    access_log ${LOG_DIR}/nginx.access.log;
+    error_log  ${LOG_DIR}/nginx.error.log;
+
+    location / {${CF_DIRECTIVE}${AUTH_DIRECTIVES}
+        proxy_pass         http://127.0.0.1:${PORT};
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+    }
+}
+NGINX_CONF
+
+sudo ln -sf "$SLUG_CONF" "/etc/nginx/sites-enabled/${SLUG}.conf"
+
+# ============================================================
+# Start services
+# ============================================================
 
 sudo systemctl daemon-reload
-sudo systemctl enable "$SLUG.service"
-sudo systemctl restart "$SLUG.service"
-echo "Systemd service configured and started"
+sudo systemctl enable "${SLUG}.service"
+sudo systemctl restart "${SLUG}.service"
 
-# == Deployment complete
+if sudo nginx -t 2>/dev/null; then
+    sudo systemctl reload nginx
+else
+    echo "[✗] nginx config test failed:"
+    sudo nginx -t
+    exit 1
+fi
+
 echo ""
-echo "========================================="
-echo "Deployment complete!"
-echo "========================================="
-echo "Service: $SLUG"
-echo "Status: $(sudo systemctl is-active $SLUG.service)"
-echo "Logs: sudo journalctl -u $SLUG.service -f"
-echo "========================================="
+echo "================================================="
+echo "[✓] Deployment complete"
+echo "    Slug   : ${SLUG}"
+echo "    Domain : ${DOMAIN}"
+echo "    Port   : ${PORT} (internal, localhost only)"
+echo "    App    : ${APP_DIR}"
+echo "    Data   : ${DATA_DIR}"
+echo "    Logs   : ${LOG_DIR}/"
+echo "    Status : $(sudo systemctl is-active ${SLUG}.service)"
+echo "================================================="
