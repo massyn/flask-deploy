@@ -180,8 +180,8 @@ sudo chown www-data:www-data "$DATA_DIR" "$LOG_DIR"
 
 if [[ -d "${APP_DIR}/.git" ]]; then
     echo "Pulling latest changes..."
-    sudo git -C "$APP_DIR" fetch --quiet
-    sudo git -C "$APP_DIR" reset --hard FETCH_HEAD
+    sudo git -c safe.directory="$APP_DIR" -C "$APP_DIR" fetch --quiet
+    sudo git -c safe.directory="$APP_DIR" -C "$APP_DIR" reset --hard FETCH_HEAD
 else
     [[ -d "$APP_DIR" ]] && sudo rm -rf "$APP_DIR"
     echo "Cloning repository..."
