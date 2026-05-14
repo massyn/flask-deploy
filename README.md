@@ -5,7 +5,7 @@ A curl-able, self-contained bash script that deploys a Flask application to an U
 ## Quick start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<user>/flask-deploy/main/deploy.sh \
+curl -fsSL https://raw.githubusercontent.com/massyn/flask-deploy/main/deploy.sh \
   | sudo bash -s -- --slug myapp --domain example.com --repo https://github.com/user/myapp
 ```
 

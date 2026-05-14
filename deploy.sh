@@ -171,7 +171,7 @@ echo "Port: ${PORT} (internal, localhost only)"
 # Directories
 # ============================================================
 
-sudo mkdir -p "$APP_DIR" "$DATA_DIR" "$LOG_DIR"
+sudo mkdir -p "$DATA_DIR" "$LOG_DIR"
 sudo chown www-data:www-data "$DATA_DIR" "$LOG_DIR"
 
 # ============================================================
