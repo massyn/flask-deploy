@@ -172,7 +172,7 @@ echo "Port: ${PORT} (internal, localhost only)"
 # ============================================================
 
 sudo mkdir -p "$DATA_DIR" "$LOG_DIR"
-sudo chown www-data:www-data "$DATA_DIR" "$LOG_DIR"
+sudo chown -R www-data:www-data "$DATA_DIR" "$LOG_DIR"
 
 # ============================================================
 # Git clone / pull
