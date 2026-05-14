@@ -183,6 +183,7 @@ if [[ -d "${APP_DIR}/.git" ]]; then
     sudo git -C "$APP_DIR" fetch --quiet
     sudo git -C "$APP_DIR" reset --hard FETCH_HEAD
 else
+    [[ -d "$APP_DIR" ]] && sudo rm -rf "$APP_DIR"
     echo "Cloning repository..."
     sudo git clone --quiet "$REPO" "$APP_DIR"
 fi
