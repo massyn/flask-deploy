@@ -13,6 +13,7 @@ REPO=""
 PASS=""
 CLOUDFLARE=false
 DRY_RUN=false
+SSL=false
 
 usage() {
     cat <<EOF
@@ -26,6 +27,7 @@ Required:
 Optional:
   --password    Enable HTTP basic auth (username: admin, password: <value>)
   --cloudflare  Block non-Cloudflare traffic using live IP ranges
+  --ssl         Enable HTTPS — requires /data/<slug>/public.pem and /data/<slug>/private.pem
   --dry-run     Validate the repository only; no server changes
 
 EOF
@@ -39,6 +41,7 @@ while [[ $# -gt 0 ]]; do
         --repo)       REPO="$2";       shift 2 ;;
         --password)   PASS="$2";       shift 2 ;;
         --cloudflare) CLOUDFLARE=true; shift ;;
+        --ssl)        SSL=true;        shift ;;
         --dry-run)    DRY_RUN=true;    shift ;;
         -h|--help)    usage ;;
         *) echo "Unknown option: $1"; usage ;;
@@ -105,6 +108,22 @@ if [[ "$DRY_RUN" == "true" ]]; then
         DB=$(grep -i "^DATABASE_URL" "${TMP}/.env" | cut -d= -f2- || true)
         if [[ -n "$DB" && "$DB" != *"/data/${SLUG}/"* ]]; then
             echo "[!] DATABASE_URL not pointing to /data/${SLUG}/ — if your db gets hosed on redeploy, you had fair warning"
+        fi
+    fi
+
+    if [[ "$SSL" == "true" ]]; then
+        if [[ -f "/data/${SLUG}/public.pem" ]]; then
+            echo "[✓] /data/${SLUG}/public.pem found"
+        else
+            echo "[✗] /data/${SLUG}/public.pem missing"
+            FAIL=true
+        fi
+
+        if [[ -f "/data/${SLUG}/private.pem" ]]; then
+            echo "[✓] /data/${SLUG}/private.pem found"
+        else
+            echo "[✗] /data/${SLUG}/private.pem missing"
+            FAIL=true
         fi
     fi
 
@@ -280,6 +299,11 @@ SYSTEMD_UNIT
 # Nginx config
 # ============================================================
 
+if [[ "$SSL" == "true" ]]; then
+    [[ -f "/data/${SLUG}/public.pem"  ]] || { echo "[✗] /data/${SLUG}/public.pem missing — cannot deploy with --ssl"; exit 1; }
+    [[ -f "/data/${SLUG}/private.pem" ]] || { echo "[✗] /data/${SLUG}/private.pem missing — cannot deploy with --ssl"; exit 1; }
+fi
+
 AUTH_DIRECTIVES=""
 if [[ -n "$PASS" ]]; then
     AUTH_DIRECTIVES="
@@ -293,7 +317,34 @@ if [[ "$CLOUDFLARE" == "true" ]]; then
         include ${CF_CONF};"
 fi
 
-sudo tee "$SLUG_CONF" > /dev/null <<NGINX_CONF
+if [[ "$SSL" == "true" ]]; then
+    sudo tee "$SLUG_CONF" > /dev/null <<NGINX_CONF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name ${DOMAIN};
+    ssl_certificate     /data/${SLUG}/public.pem;
+    ssl_certificate_key /data/${SLUG}/private.pem;
+
+    access_log ${LOG_DIR}/nginx.access.log;
+    error_log  ${LOG_DIR}/nginx.error.log;
+
+    location / {${CF_DIRECTIVE}${AUTH_DIRECTIVES}
+        proxy_pass         http://127.0.0.1:${PORT};
+        proxy_set_header   Host              \$host;
+        proxy_set_header   X-Real-IP         \$remote_addr;
+        proxy_set_header   X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
+    }
+}
+NGINX_CONF
+else
+    sudo tee "$SLUG_CONF" > /dev/null <<NGINX_CONF
 server {
     listen 80;
     server_name ${DOMAIN};
@@ -310,6 +361,7 @@ server {
     }
 }
 NGINX_CONF
+fi
 
 sudo ln -sf "$SLUG_CONF" "/etc/nginx/sites-enabled/${SLUG}.conf"
 
@@ -329,12 +381,19 @@ else
     exit 1
 fi
 
+if [[ "$SSL" == "true" ]]; then
+    SSL_STATUS="enabled (port 443, port 80 redirects)"
+else
+    SSL_STATUS="disabled (port 80 only)"
+fi
+
 echo ""
 echo "================================================="
 echo "[✓] Deployment complete"
 echo "    Slug   : ${SLUG}"
 echo "    Domain : ${DOMAIN}"
 echo "    Port   : ${PORT} (internal, localhost only)"
+echo "    SSL    : ${SSL_STATUS}"
 echo "    App    : ${APP_DIR}"
 echo "    Data   : ${DATA_DIR}"
 echo "    Logs   : ${LOG_DIR}/"
