@@ -27,7 +27,7 @@ Required:
 Optional:
   --password    Enable HTTP basic auth (username: admin, password: <value>)
   --cloudflare  Block non-Cloudflare traffic using live IP ranges
-  --ssl         Enable HTTPS — requires /data/<slug>/public.pem and /data/<slug>/private.pem
+  --ssl         Enable HTTPS — uses /data/<slug>/public.pem and /data/<slug>/private.pem (auto-generated if absent)
   --dry-run     Validate the repository only; no server changes
 
 EOF
@@ -112,18 +112,14 @@ if [[ "$DRY_RUN" == "true" ]]; then
     fi
 
     if [[ "$SSL" == "true" ]]; then
-        if [[ -f "/data/${SLUG}/public.pem" ]]; then
+        if [[ -f "/data/${SLUG}/public.pem" && -f "/data/${SLUG}/private.pem" ]]; then
             echo "[✓] /data/${SLUG}/public.pem found"
-        else
-            echo "[✗] /data/${SLUG}/public.pem missing"
-            FAIL=true
-        fi
-
-        if [[ -f "/data/${SLUG}/private.pem" ]]; then
             echo "[✓] /data/${SLUG}/private.pem found"
         else
-            echo "[✗] /data/${SLUG}/private.pem missing"
-            FAIL=true
+            echo "[!] SSL certs missing — would auto-generate self-signed cert at:"
+            echo "    /data/${SLUG}/public.pem"
+            echo "    /data/${SLUG}/private.pem"
+            echo "    Replace with a real cert (Let's Encrypt / Cloudflare origin) before going to production."
         fi
     fi
 
@@ -300,8 +296,20 @@ SYSTEMD_UNIT
 # ============================================================
 
 if [[ "$SSL" == "true" ]]; then
-    [[ -f "/data/${SLUG}/public.pem"  ]] || { echo "[✗] /data/${SLUG}/public.pem missing — cannot deploy with --ssl"; exit 1; }
-    [[ -f "/data/${SLUG}/private.pem" ]] || { echo "[✗] /data/${SLUG}/private.pem missing — cannot deploy with --ssl"; exit 1; }
+    CERT="/data/${SLUG}/public.pem"
+    KEY="/data/${SLUG}/private.pem"
+    if [[ ! -f "$CERT" || ! -f "$KEY" ]]; then
+        echo "[!] SSL certs not found — generating self-signed certificate..."
+        sudo openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+            -keyout "$KEY" \
+            -out "$CERT" \
+            -subj "/CN=localhost" 2>/dev/null
+        sudo chown www-data:www-data "$CERT" "$KEY"
+        sudo chmod 640 "$KEY"
+        echo "[!] WARNING: Self-signed certificate generated."
+        echo "    Replace /data/${SLUG}/public.pem and /data/${SLUG}/private.pem"
+        echo "    with a real certificate (Let's Encrypt / Cloudflare origin cert) before going to production."
+    fi
 fi
 
 AUTH_DIRECTIVES=""
