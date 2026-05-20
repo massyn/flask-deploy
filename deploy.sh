@@ -14,6 +14,7 @@ PASS=""
 CLOUDFLARE=false
 DRY_RUN=false
 SSL=false
+ENV_FILE=""
 
 usage() {
     cat <<EOF
@@ -28,6 +29,7 @@ Optional:
   --password    Enable HTTP basic auth (username: admin, password: <value>)
   --cloudflare  Block non-Cloudflare traffic using live IP ranges
   --ssl         Enable HTTPS — uses /data/<slug>/public.pem and /data/<slug>/private.pem (auto-generated if absent)
+  --env         Path to a .env file; moved (not copied) into the repo root after git pull
   --dry-run     Validate the repository only; no server changes
 
 EOF
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
         --password)   PASS="$2";       shift 2 ;;
         --cloudflare) CLOUDFLARE=true; shift ;;
         --ssl)        SSL=true;        shift ;;
+        --env)        ENV_FILE="$2";   shift 2 ;;
         --dry-run)    DRY_RUN=true;    shift ;;
         -h|--help)    usage ;;
         *) echo "Unknown option: $1"; usage ;;
@@ -51,6 +54,7 @@ done
 [[ -z "$SLUG"   ]] && { echo "Error: --slug is required";   usage; }
 [[ -z "$DOMAIN" ]] && { echo "Error: --domain is required"; usage; }
 [[ -z "$REPO"   ]] && { echo "Error: --repo is required";   usage; }
+[[ -n "$ENV_FILE" && ! -f "$ENV_FILE" ]] && { echo "Error: --env file not found: ${ENV_FILE}"; exit 1; }
 
 APP_DIR="/opt/${SLUG}"
 DATA_DIR="/data/${SLUG}"
@@ -121,6 +125,10 @@ if [[ "$DRY_RUN" == "true" ]]; then
             echo "    /data/${SLUG}/private.pem"
             echo "    Replace with a real cert (Let's Encrypt / Cloudflare origin) before going to production."
         fi
+    fi
+
+    if [[ -n "$ENV_FILE" ]]; then
+        echo "[i] --env specified: ${ENV_FILE} would be moved to ${APP_DIR}/.env after git pull (skipped in dry-run)"
     fi
 
     if [[ "$FAIL" == "true" ]]; then
@@ -201,6 +209,16 @@ else
     [[ -d "$APP_DIR" ]] && sudo rm -rf "$APP_DIR"
     echo "Cloning repository..."
     sudo git clone --quiet "$REPO" "$APP_DIR"
+fi
+
+# ============================================================
+# .env injection
+# ============================================================
+
+if [[ -n "$ENV_FILE" ]]; then
+    sudo mv "$ENV_FILE" "${APP_DIR}/.env"
+    sudo chmod 600 "${APP_DIR}/.env"
+    echo ".env injected (source deleted): ${ENV_FILE}"
 fi
 
 # ============================================================
