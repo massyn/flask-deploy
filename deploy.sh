@@ -155,9 +155,10 @@ fi
 sudo systemctl enable nginx
 sudo systemctl start nginx 2>/dev/null || true
 
-if ! python3 -c "import venv" 2>/dev/null; then
-    echo "Installing python3-venv..."
-    sudo apt-get install -y -q python3-venv
+PYTHON_VER=$(python3 -c "import sys; print('{}.{}'.format(sys.version_info.major, sys.version_info.minor))")
+if ! python3 -c "import ensurepip" 2>/dev/null; then
+    echo "Installing python${PYTHON_VER}-venv..."
+    sudo apt-get install -y -q "python${PYTHON_VER}-venv"
 fi
 
 if [[ -n "$PASS" ]] && ! command -v htpasswd &>/dev/null; then
