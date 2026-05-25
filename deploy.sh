@@ -226,7 +226,8 @@ fi
 # Python venv and dependencies
 # ============================================================
 
-if [[ ! -d "$VENV" ]]; then
+if [[ ! -f "${VENV}/bin/pip" ]]; then
+    [[ -d "$VENV" ]] && sudo rm -rf "$VENV"
     sudo python3 -m venv "$VENV"
 fi
 
