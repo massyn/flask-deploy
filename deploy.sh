@@ -73,6 +73,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
     echo "Cloning ${REPO} for validation..."
     if ! git clone --quiet "$REPO" "$TMP" 2>/dev/null; then
         echo "[✗] Failed to clone repository: ${REPO}"
+        echo "    If this is a private repo, check GitHub → Settings → Actions → General"
+        echo "    Workflow permissions must be 'Read and write permissions' or at minimum 'Read repository contents'."
         exit 1
     fi
 
@@ -209,7 +211,12 @@ if [[ -d "${APP_DIR}/.git" ]]; then
 else
     [[ -d "$APP_DIR" ]] && sudo rm -rf "$APP_DIR"
     echo "Cloning repository..."
-    sudo git clone --quiet "$REPO" "$APP_DIR"
+    if ! sudo git clone --quiet "$REPO" "$APP_DIR"; then
+        echo "[✗] Failed to clone repository: ${REPO}"
+        echo "    If this is a private repo, check GitHub → Settings → Actions → General"
+        echo "    Workflow permissions must be 'Read and write permissions' or at minimum 'Read repository contents'."
+        exit 1
+    fi
 fi
 
 # ============================================================
@@ -396,6 +403,10 @@ sudo ln -sf "$SLUG_CONF" "/etc/nginx/sites-enabled/${SLUG}.conf"
 # ============================================================
 # Start services
 # ============================================================
+
+WWWDATA_HOME=$(getent passwd www-data | cut -d: -f6)
+sudo mkdir -p "${WWWDATA_HOME}/.gunicorn"
+sudo chown www-data:www-data "${WWWDATA_HOME}/.gunicorn"
 
 sudo systemctl daemon-reload
 sudo systemctl enable "${SLUG}.service"
