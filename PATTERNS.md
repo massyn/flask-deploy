@@ -446,6 +446,11 @@ def create_app() -> Flask:
         'script-src': [
             "'self'",
             'https://cdn.jsdelivr.net',   # Bootstrap JS / Popper
+            # 'https://static.cloudflareinsights.com',  # add if using Cloudflare analytics
+        ],
+        'connect-src': [
+            "'self'",
+            'https://cdn.jsdelivr.net',   # CDN source maps are fetched as network requests
         ],
         'font-src': ["'self'", 'data:'],
         'img-src': ["'self'", 'data:'],
