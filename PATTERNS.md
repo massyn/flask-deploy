@@ -426,6 +426,54 @@ def webhook():
 
 ---
 
+## Security headers (Flask-Talisman)
+
+`flask-talisman` sets security headers automatically: HSTS, CSP, X-Frame-Options,
+X-Content-Type-Options, and Referrer-Policy. Add it to `requirements.txt` and initialise in the
+app factory:
+
+```python
+from flask_talisman import Talisman
+
+def create_app() -> Flask:
+    ...
+    csp = {
+        'default-src': ["'self'"],
+        'style-src': [
+            "'self'",
+            'https://cdn.jsdelivr.net',   # Bootstrap CSS
+        ],
+        'script-src': [
+            "'self'",
+            'https://cdn.jsdelivr.net',   # Bootstrap JS / Popper
+        ],
+        'font-src': ["'self'", 'data:'],
+        'img-src': ["'self'", 'data:'],
+    }
+    Talisman(app, content_security_policy=csp)
+```
+
+**CSP is strict by default — overly strict settings will silently break Bootstrap CDN and any inline
+scripts.** Always whitelist CDN origins explicitly. If you load additional third-party assets (fonts,
+icons, analytics), add their origins to the relevant directive.
+
+If a route must serve an inline script (e.g. a Jinja-rendered block), add a nonce rather than
+relaxing CSP globally:
+
+```python
+# In the route
+from flask_talisman import talisman
+
+@bp.route('/chart')
+@talisman(content_security_policy={
+    'script-src': ["'self'", "'unsafe-inline'"],
+})
+def chart():
+    ...
+```
+
+---
+
 ## Google OAuth auth bypass for testing (`TEST_USER`)
 
 Set `TEST_USER=<name>` in `.env_dev` to skip the Google OAuth round-trip during development:
