@@ -373,6 +373,59 @@ Always use `sticky-top` on the navbar. Do not use `fixed-top` (requires manual b
 
 ---
 
+## Google Auth — reference implementation
+
+When adding Google OAuth to a new project, copy the auth package from this repo. Do not rewrite it from scratch.
+
+| File | Purpose |
+|------|---------|
+| [`app/auth/__init__.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/__init__.py) | Blueprint, OAuth routes, login / callback / logout / test-callback |
+| [`app/auth/service.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/service.py) | `find_or_create_user`, `get_oauth_redirect_uri`, `get_remote_ip` |
+| [`app/auth/decorators.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/decorators.py) | `login_required` decorator |
+
+After copying, update the import paths from `app.*` to match the target project's package name.
+
+---
+
+## CSRF protection
+
+`flask-wtf` provides global CSRF protection. Add it to `requirements.txt` and wire it in the app factory:
+
+```python
+from flask_wtf.csrf import CSRFProtect
+
+csrf = CSRFProtect()
+
+def create_app() -> Flask:
+    ...
+    csrf.init_app(app)
+```
+
+Every POST form in a template must include the token:
+
+```html
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+```
+
+AJAX requests must send the token in a header:
+
+```javascript
+headers: { 'X-CSRFToken': document.querySelector('[name=csrf_token]').value }
+```
+
+To exempt a specific route (e.g. a webhook endpoint):
+
+```python
+from app import csrf
+
+@csrf.exempt
+@bp.route('/webhook', methods=['POST'])
+def webhook():
+    ...
+```
+
+---
+
 ## Google OAuth auth bypass for testing (`TEST_USER`)
 
 Set `TEST_USER=<name>` in `.env_dev` to skip the Google OAuth round-trip during development:

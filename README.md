@@ -2,6 +2,27 @@
 
 A curl-able, self-contained bash script that deploys a Flask application to an Ubuntu/Debian server using Gunicorn, systemd, and Nginx. Idempotent — safe to run multiple times against the same slug.
 
+## Server build
+
+Run once per server to install the AWS CLI, configure credentials, and set up backup and heartbeat cron jobs.
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/massyn/flask-deploy/main/build_server.sh)
+```
+
+The script will prompt for any values not already present in `/etc/flask-deploy/.env`:
+
+| Variable | Description |
+|----------|-------------|
+| `AWS_ACCESS_KEY_ID` | AWS credentials for S3 backup |
+| `AWS_SECRET_ACCESS_KEY` | AWS credentials for S3 backup |
+| `AWS_REGION` | AWS region (e.g. `us-east-1`) |
+| `AWS_S3_BUCKET` | S3 bucket name for backups |
+| `HC_HEARTBEAT` | healthchecks.io URL — pinged every minute |
+| `HC_BACKUP` | healthchecks.io URL — pinged after each successful backup |
+
+Re-running is safe — existing values are preserved, helper scripts are updated, and cron entries are not duplicated.
+
 ## Quick start
 
 ```bash
