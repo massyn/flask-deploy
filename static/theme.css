@@ -1,0 +1,16 @@
+:root {
+    --color-bg: #ffffff;
+    --color-fg: #212529;
+    --color-primary: #0d6efd;
+    --color-navbar: #212529;
+    --color-accent: #6c757d;
+}
+
+body {
+    background-color: var(--color-bg);
+    color: var(--color-fg);
+}
+
+.app-navbar {
+    background-color: var(--color-navbar) !important;
+}

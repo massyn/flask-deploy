@@ -368,7 +368,61 @@ def create_app() -> Flask:
 Always use `sticky-top` on the navbar. Do not use `fixed-top` (requires manual body padding).
 
 ```html
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark sticky-top">
+<nav class="navbar navbar-expand-lg navbar-dark app-navbar sticky-top">
+```
+
+---
+
+## CSS theming
+
+Every app defines `static/theme.css` as the single source of truth for site-wide colours.
+Components consume the variables; developers may add per-component overrides freely.
+To swap the full theme, create `theme-dark.css` (or similar) that redefines the same `:root`
+variables and swap the `<link>` in `base.html`.
+
+**Standard variables:**
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `--color-bg` | `#ffffff` | Body background |
+| `--color-fg` | `#212529` | Body text |
+| `--color-primary` | `#0d6efd` | Primary accent — buttons, links |
+| `--color-navbar` | `#212529` | Navbar background |
+| `--color-accent` | `#6c757d` | Secondary accent — badges, secondary buttons |
+
+**`static/theme.css` (minimal baseline):**
+
+```css
+:root {
+    --color-bg: #ffffff;
+    --color-fg: #212529;
+    --color-primary: #0d6efd;
+    --color-navbar: #212529;
+    --color-accent: #6c757d;
+}
+
+body {
+    background-color: var(--color-bg);
+    color: var(--color-fg);
+}
+
+.app-navbar {
+    background-color: var(--color-navbar) !important;
+}
+```
+
+Load it in `base.html` after Bootstrap, before `extra_css`:
+
+```html
+<link href="..." rel="stylesheet">  {# Bootstrap CDN #}
+<link rel="stylesheet" href="{{ url_for('static', filename='theme.css') }}">
+{% block extra_css %}{% endblock %}
+```
+
+Apply `.app-navbar` to the navbar element (replaces Bootstrap's `bg-dark`):
+
+```html
+<nav class="navbar navbar-expand-lg navbar-dark app-navbar sticky-top">
 ```
 
 ---
