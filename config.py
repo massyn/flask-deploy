@@ -16,4 +16,5 @@ class Config:
     TEST_USER = os.environ.get('TEST_USER', '')
     PERMANENT_SESSION_LIFETIME = timedelta(days=30)
     FORCE_HTTPS = os.environ.get('FORCE_HTTPS', 'false').lower() == 'true'
+    SESSION_COOKIE_SECURE = os.environ.get('FLASK_DEBUG', 'False').lower() != 'true'
     VERSION = os.environ.get('VERSION', '')
