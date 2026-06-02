@@ -18,3 +18,4 @@ class Config:
     FORCE_HTTPS = os.environ.get('FORCE_HTTPS', 'false').lower() == 'true'
     SESSION_COOKIE_SECURE = os.environ.get('FLASK_DEBUG', 'False').lower() != 'true'
     VERSION = os.environ.get('VERSION', '')
+    GTAG_ID = os.environ.get('GTAG_ID', '')

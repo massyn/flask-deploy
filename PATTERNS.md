@@ -237,6 +237,67 @@ In `base.html`:
 
 ---
 
+## Google tag (gtag.js)
+
+Set `GTAG_ID` in `.env` to inject the Google tag (used for Google Analytics 4 or Google Ads
+conversion tracking) into every page. If unset, no tag is rendered — no empty script blocks.
+
+In `config.py`:
+```python
+GTAG_ID = os.environ.get('GTAG_ID', '')
+```
+
+Inject into templates via the context processor in the app factory (add alongside `version`):
+
+```python
+@app.context_processor
+def inject_globals():
+    return dict(
+        version=app.config.get('VERSION', ''),
+        gtag_id=app.config.get('GTAG_ID', ''),
+    )
+```
+
+In `base.html`, place before Bootstrap (Google recommends loading the tag as early as possible):
+
+```html
+{% if gtag_id %}
+<script async src="https://www.googletagmanager.com/gtag/js?id={{ gtag_id }}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', '{{ gtag_id }}');
+</script>
+{% endif %}
+```
+
+**CSP note:** If the app uses Flask-Talisman, the tag requires two additions to the CSP:
+
+- `script-src`: add `https://www.googletagmanager.com` (for the external gtag.js file)
+- `connect-src`: add `https://www.googletagmanager.com` and `https://www.google-analytics.com`
+- The inline `<script>` block also requires either `'unsafe-inline'` or a nonce in `script-src`
+
+```python
+csp = {
+    ...
+    'script-src': [
+        "'self'",
+        'https://cdn.jsdelivr.net',
+        'https://www.googletagmanager.com',  # gtag.js
+        "'unsafe-inline'",                   # gtag inline init block
+    ],
+    'connect-src': [
+        "'self'",
+        'https://www.googletagmanager.com',
+        'https://www.google-analytics.com',
+    ],
+    ...
+}
+```
+
+---
+
 ## Reverse proxy / OAuth redirect URI
 
 Flask runs behind Nginx in production. Without intervention, `url_for(..., _external=True)` produces
@@ -544,12 +605,16 @@ def create_app() -> Flask:
         ],
         'script-src': [
             "'self'",
-            'https://cdn.jsdelivr.net',   # Bootstrap JS / Popper
+            'https://cdn.jsdelivr.net',              # Bootstrap JS / Popper
             # 'https://static.cloudflareinsights.com',  # add if using Cloudflare analytics
+            # 'https://www.googletagmanager.com',    # add if using GTAG_ID
+            # "'unsafe-inline'",                     # required by gtag inline init block
         ],
         'connect-src': [
             "'self'",
-            'https://cdn.jsdelivr.net',   # CDN source maps are fetched as network requests
+            'https://cdn.jsdelivr.net',              # CDN source maps are fetched as network requests
+            # 'https://www.googletagmanager.com',    # add if using GTAG_ID
+            # 'https://www.google-analytics.com',    # add if using GTAG_ID
         ],
         'font-src': ["'self'", 'data:'],
         'img-src': ["'self'", 'data:'],

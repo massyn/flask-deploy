@@ -37,8 +37,11 @@ def create_app() -> Flask:
     init_db(app)
 
     @app.context_processor
-    def inject_version():
-        return dict(version=app.config.get('VERSION', ''))
+    def inject_globals():
+        return dict(
+            version=app.config.get('VERSION', ''),
+            gtag_id=app.config.get('GTAG_ID', ''),
+        )
 
     @app.errorhandler(404)
     def not_found(e):
