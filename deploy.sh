@@ -370,6 +370,7 @@ server {
     error_log  ${LOG_DIR}/nginx.error.log;
 
     location / {${CF_DIRECTIVE}${AUTH_DIRECTIVES}
+        client_max_body_size 32m;
         proxy_pass         http://127.0.0.1:${PORT};
         proxy_set_header   Host              \$host;
         proxy_set_header   X-Real-IP         \$remote_addr;
@@ -388,6 +389,7 @@ server {
     error_log  ${LOG_DIR}/nginx.error.log;
 
     location / {${CF_DIRECTIVE}${AUTH_DIRECTIVES}
+        client_max_body_size 32m;
         proxy_pass         http://127.0.0.1:${PORT};
         proxy_set_header   Host              \$host;
         proxy_set_header   X-Real-IP         \$remote_addr;
