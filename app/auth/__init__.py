@@ -1,4 +1,4 @@
-from flask import Blueprint, redirect, url_for, session, current_app
+from flask import Blueprint, redirect, render_template, url_for, session, current_app
 from authlib.integrations.flask_client import OAuth
 
 bp = Blueprint('auth', __name__, url_prefix='/auth')
@@ -13,6 +13,13 @@ oauth.register(
 
 @bp.route('/login')
 def login():
+    if session.get('user'):
+        return redirect(url_for('main.index'))
+    return render_template('login.html')
+
+
+@bp.route('/google')
+def google():
     test_user = current_app.config.get('TEST_USER', '')
     if test_user:
         return redirect(url_for('auth.test_callback'))

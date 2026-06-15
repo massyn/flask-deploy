@@ -477,6 +477,19 @@ Always use `sticky-top` on the navbar. Do not use `fixed-top` (requires manual b
 <nav class="navbar navbar-expand-lg navbar-dark app-navbar sticky-top">
 ```
 
+Use Unicode icons on all navbar items for a professional appearance — no external icon library needed.
+Standard assignments:
+
+| Item | Icon |
+|------|------|
+| Home | 🏠 |
+| About | ℹ️ |
+| Login | 🔑 |
+| Logout | 🚪 |
+| User (dropdown) | 👤 |
+
+Add further page-specific icons following the same convention.
+
 ---
 
 ## CSS theming
@@ -539,11 +552,47 @@ When adding Google OAuth to a new project, copy the auth package from this repo.
 
 | File | Purpose |
 |------|---------|
-| [`app/auth/__init__.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/__init__.py) | Blueprint, OAuth routes, login / callback / logout / test-callback |
+| [`app/auth/__init__.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/__init__.py) | Blueprint, OAuth routes, login / google / callback / logout / test-callback |
 | [`app/auth/service.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/service.py) | `find_or_create_user`, `get_oauth_redirect_uri`, `get_remote_ip` |
 | [`app/auth/decorators.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/decorators.py) | `login_required` decorator |
+| [`templates/login.html`](https://github.com/massyn/flask-deploy/blob/main/templates/login.html) | Login page — renders "Login with Google" button |
 
 After copying, update the import paths from `app.*` to match the target project's package name.
+
+### Auth routes
+
+The login flow is split into two routes:
+
+| Route | Purpose |
+|-------|---------|
+| `GET /auth/login` | Renders `login.html` — shows "Login with Google" button. Redirects home if already authenticated. |
+| `GET /auth/google` | Initiates the Google OAuth redirect (or test-callback if `TEST_USER` is set). |
+| `GET /auth/callback` | Handles the OAuth callback from Google. |
+| `GET /auth/logout` | Clears the session and redirects home. |
+
+### Navbar auth section
+
+When unauthenticated, show a `🔑 Login` link pointing to `auth.login`.
+
+When authenticated, show the user's email address (falling back to name) as a Bootstrap dropdown with a `🚪 Logout` item:
+
+```html
+{% if session.get('user') %}
+<li class="nav-item dropdown">
+    <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button"
+       data-bs-toggle="dropdown" aria-expanded="false">
+        👤 {{ session['user']['email'] or session['user']['name'] }}
+    </a>
+    <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
+        <li><a class="dropdown-item" href="{{ url_for('auth.logout') }}">🚪 Logout</a></li>
+    </ul>
+</li>
+{% else %}
+<li class="nav-item">
+    <a class="nav-link" href="{{ url_for('auth.login') }}">🔑 Login</a>
+</li>
+{% endif %}
+```
 
 ---
 
