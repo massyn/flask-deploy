@@ -13,11 +13,20 @@ def get_remote_ip() -> str:
 
 def get_oauth_redirect_uri() -> str:
     cf_visitor = request.headers.get('CF-Visitor', '')
-    if '"scheme":"https"' in cf_visitor:
-        return url_for('auth.callback', _external=True, _scheme='https')
-    if current_app.config.get('FORCE_HTTPS'):
-        return url_for('auth.callback', _external=True, _scheme='https')
-    return url_for('auth.callback', _external=True)
+    is_https = '"scheme":"https"' in cf_visitor or current_app.config.get('FORCE_HTTPS')
+    scheme = 'https' if is_https else request.scheme
+
+    trusted_hostnames = current_app.config.get('APP_HOSTNAMES', [])
+    if trusted_hostnames:
+        # request.host is attacker-controllable via the Host header, so only use it
+        # if it matches an entry in the trusted allow-list; otherwise fall back to
+        # the first configured hostname.
+        hostname = request.host if request.host in trusted_hostnames else trusted_hostnames[0]
+        return f'{scheme}://{hostname}{url_for("auth.callback")}'
+
+    # No trusted hostnames configured — falls back to request.host, which is
+    # attacker-controllable via the Host header. Set APP_HOSTNAME in production.
+    return url_for('auth.callback', _external=True, _scheme=scheme)
 
 
 def find_or_create_user(google_id: str, name: str, email: str) -> dict:

@@ -306,21 +306,49 @@ Flask runs behind Nginx in production. Without intervention, `url_for(..., _exte
 **Do not use BASE_URL** — it hardcodes the domain.
 **Do not rely on ProxyFix alone** — it only works if Nginx forwards `X-Forwarded-Proto`.
 
-Instead, use a helper that checks in order:
+**`url_for(..., _external=True)` alone is also a Host-header-injection risk**: when `SERVER_NAME`
+isn't set, Flask builds the external URL from `request.host`, which comes straight from the
+client-supplied `Host` header. An attacker can send a forged `Host` and get back an OAuth redirect
+URI pointing at a domain they control. Pin the hostname via an `APP_HOSTNAME` allow-list (env var)
+instead of trusting the request.
 
-1. **Cloudflare `CF-Visitor` header** — present when request came in over HTTPS via Cloudflare.
-2. **`FORCE_HTTPS=true`** — explicit override for non-Cloudflare deployments.
-3. **Flask native** — falls back to whatever scheme Flask sees. Correct for local dev.
+**Multiple valid hostnames** (e.g. an apex domain and its `www` subdomain both serving the site,
+without a canonical redirect between them) are common enough that a single fixed hostname isn't
+enough — `APP_HOSTNAME` is a comma-separated allow-list, and `request.host` is used only if it
+matches an entry in it.
+
+Use a helper that:
+
+1. Picks the scheme — **Cloudflare `CF-Visitor` header** (present when the request came in over
+   HTTPS via Cloudflare), or **`FORCE_HTTPS=true`** as an explicit override, or the scheme Flask
+   sees natively (correct for local dev).
+2. Picks the host from `request.host` only if it's in the `APP_HOSTNAME` allow-list, falling back
+   to the first configured hostname otherwise — never trusting an unrecognised `Host` header.
 
 ```python
 def get_oauth_redirect_uri() -> str:
     cf_visitor = request.headers.get('CF-Visitor', '')
-    if '"scheme":"https"' in cf_visitor:
-        return url_for('auth.callback', _external=True, _scheme='https')
-    if current_app.config.get('FORCE_HTTPS'):
-        return url_for('auth.callback', _external=True, _scheme='https')
-    return url_for('auth.callback', _external=True)
+    is_https = '"scheme":"https"' in cf_visitor or current_app.config.get('FORCE_HTTPS')
+    scheme = 'https' if is_https else request.scheme
+
+    trusted_hostnames = current_app.config.get('APP_HOSTNAMES', [])
+    if trusted_hostnames:
+        hostname = request.host if request.host in trusted_hostnames else trusted_hostnames[0]
+        return f'{scheme}://{hostname}{url_for("auth.callback")}'
+
+    # No trusted hostnames configured — falls back to request.host, which is
+    # attacker-controllable via the Host header. Set APP_HOSTNAME in production.
+    return url_for('auth.callback', _external=True, _scheme=scheme)
 ```
+
+`config.py` parses the env var into a list:
+
+```python
+APP_HOSTNAMES = [h.strip() for h in os.environ.get('APP_HOSTNAME', '').split(',') if h.strip()]
+```
+
+Set `APP_HOSTNAME` in `.env` for every deployed app, comma-separated if there's more than one
+valid hostname (e.g. `APP_HOSTNAME=bouts.co.za,www.bouts.co.za`).
 
 ---
 
