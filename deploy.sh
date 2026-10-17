@@ -206,7 +206,12 @@ sudo chown -R www-data:www-data "$DATA_DIR" "$LOG_DIR"
 
 if [[ -d "${APP_DIR}/.git" ]]; then
     echo "Pulling latest changes..."
-    sudo git -c safe.directory="$APP_DIR" -C "$APP_DIR" fetch --quiet
+    # Fetch from --repo, not the clone's saved origin, so a rotated token takes effect.
+    if ! sudo git -c safe.directory="$APP_DIR" -C "$APP_DIR" fetch --quiet "$REPO"; then
+        echo "[✗] Failed to fetch from repository"
+        echo "    If this is a private repo, check the token in --repo is valid and can read the repository."
+        exit 1
+    fi
     sudo git -c safe.directory="$APP_DIR" -C "$APP_DIR" reset --hard FETCH_HEAD
 else
     [[ -d "$APP_DIR" ]] && sudo rm -rf "$APP_DIR"
