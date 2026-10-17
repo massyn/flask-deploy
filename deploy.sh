@@ -10,6 +10,7 @@ set -eo pipefail
 SLUG=""
 DOMAIN=""
 REPO=""
+SOURCE=""
 PASS=""
 CLOUDFLARE=false
 DRY_RUN=false
@@ -18,18 +19,21 @@ ENV_FILE=""
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") --slug <slug> --domain <domain> --repo <url> [options]
+Usage: $(basename "$0") --slug <slug> --domain <domain> (--source <archive> | --repo <url>) [options]
 
 Required:
   --slug      App identifier (used for all directory and service naming)
   --domain    Nginx server_name value(s), space-separated
+
+App code (exactly one):
+  --source    Path to a .tar.gz of the app (e.g. from git archive); deleted once unpacked
   --repo      Git repository URL to clone
 
 Optional:
   --password    Enable HTTP basic auth (username: admin, password: <value>)
   --cloudflare  Block non-Cloudflare traffic using live IP ranges
   --ssl         Enable HTTPS — uses /data/<slug>/public.pem and /data/<slug>/private.pem (auto-generated if absent)
-  --env         Path to a .env file; moved (not copied) into the repo root after git pull
+  --env         Path to a .env file; moved (not copied) into the app directory
   --dry-run     Validate the repository only; no server changes
 
 EOF
@@ -41,6 +45,7 @@ while [[ $# -gt 0 ]]; do
         --slug)       SLUG="$2";       shift 2 ;;
         --domain)     DOMAIN="$2";     shift 2 ;;
         --repo)       REPO="$2";       shift 2 ;;
+        --source)     SOURCE="$2";     shift 2 ;;
         --password)   PASS="$2";       shift 2 ;;
         --cloudflare) CLOUDFLARE=true; shift ;;
         --ssl)        SSL=true;        shift ;;
@@ -53,7 +58,8 @@ done
 
 [[ -z "$SLUG"   ]] && { echo "Error: --slug is required";   usage; }
 [[ -z "$DOMAIN" ]] && { echo "Error: --domain is required"; usage; }
-[[ -z "$REPO"   ]] && { echo "Error: --repo is required";   usage; }
+[[ -z "$REPO" && -z "$SOURCE" || -n "$REPO" && -n "$SOURCE" ]] && { echo "Error: pass exactly one of --source or --repo"; usage; }
+[[ -n "$SOURCE" && ! -f "$SOURCE" ]] && { echo "Error: --source archive not found: ${SOURCE}"; exit 1; }
 [[ -n "$ENV_FILE" && ! -f "$ENV_FILE" ]] && { echo "Error: --env file not found: ${ENV_FILE}"; exit 1; }
 
 APP_DIR="/opt/${SLUG}"
@@ -70,12 +76,20 @@ if [[ "$DRY_RUN" == "true" ]]; then
     TMP=$(mktemp -d)
     trap 'rm -rf "$TMP"' EXIT
 
-    echo "Cloning ${REPO} for validation..."
-    if ! git clone --quiet "$REPO" "$TMP" 2>/dev/null; then
-        echo "[✗] Failed to clone repository: ${REPO}"
-        echo "    If this is a private repo, check GitHub → Settings → Actions → General"
-        echo "    Workflow permissions must be 'Read and write permissions' or at minimum 'Read repository contents'."
-        exit 1
+    if [[ -n "$SOURCE" ]]; then
+        echo "Unpacking ${SOURCE} for validation..."
+        if ! tar -xzf "$SOURCE" -C "$TMP"; then
+            echo "[✗] Failed to unpack archive: ${SOURCE}"
+            exit 1
+        fi
+    else
+        echo "Cloning ${REPO} for validation..."
+        if ! git clone --quiet "$REPO" "$TMP" 2>/dev/null; then
+            echo "[✗] Failed to clone repository: ${REPO}"
+            echo "    If this is a private repo, check GitHub → Settings → Actions → General"
+            echo "    Workflow permissions must be 'Read and write permissions' or at minimum 'Read repository contents'."
+            exit 1
+        fi
     fi
 
     FAIL=false
@@ -130,7 +144,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     fi
 
     if [[ -n "$ENV_FILE" ]]; then
-        echo "[i] --env specified: ${ENV_FILE} would be moved to ${APP_DIR}/.env after git pull (skipped in dry-run)"
+        echo "[i] --env specified: ${ENV_FILE} would be moved to ${APP_DIR}/.env (skipped in dry-run)"
     fi
 
     if [[ "$FAIL" == "true" ]]; then
@@ -201,10 +215,24 @@ sudo mkdir -p "$DATA_DIR" "$LOG_DIR"
 sudo chown -R www-data:www-data "$DATA_DIR" "$LOG_DIR"
 
 # ============================================================
-# Git clone / pull
+# App code: unpack --source, or git clone / pull --repo
 # ============================================================
 
-if [[ -d "${APP_DIR}/.git" ]]; then
+if [[ -n "$SOURCE" ]]; then
+    echo "Unpacking ${SOURCE}..."
+    STAGE=$(mktemp -d)
+    if ! tar -xzf "$SOURCE" -C "$STAGE"; then
+        rm -rf "$STAGE"
+        echo "[✗] Failed to unpack archive: ${SOURCE}"
+        exit 1
+    fi
+    sudo mkdir -p "$APP_DIR"
+    # Replace the app files but keep the venv and .env (this also clears out an earlier git clone).
+    sudo find "$APP_DIR" -mindepth 1 -maxdepth 1 ! -name venv ! -name .env -exec rm -rf {} +
+    sudo cp -a "${STAGE}/." "${APP_DIR}/"
+    rm -rf "$STAGE"
+    sudo rm -f "$SOURCE"
+elif [[ -d "${APP_DIR}/.git" ]]; then
     echo "Pulling latest changes..."
     # Fetch from --repo, not the clone's saved origin, so a rotated token takes effect.
     if ! sudo git -c safe.directory="$APP_DIR" -C "$APP_DIR" fetch --quiet "$REPO"; then
