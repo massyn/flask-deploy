@@ -42,7 +42,9 @@ sudo bash deploy.sh --slug myapp --domain example.com --repo https://github.com/
 |------|----------|-------------|
 | `--slug` | Yes | App identifier — used for all directory and service naming |
 | `--domain` | Yes | Nginx `server_name` value(s), space-separated |
-| `--repo` | Yes | Git repository URL to clone |
+| `--source` | One of `--source`/`--repo` | Path to a `.tar.gz` of the app on the server (e.g. from `git archive`); deleted once unpacked |
+| `--repo` | One of `--source`/`--repo` | Git repository URL to clone |
+| `--env` | No | Path to a `.env` file; moved (not copied) into the app directory |
 | `--password` | No | Enable HTTP basic auth (username: `admin`, password: `<value>`) |
 | `--cloudflare` | No | Flag — block all non-Cloudflare traffic using live IP ranges |
 | `--ssl` | No | Flag — enable HTTPS; requires `/data/<slug>/public.pem` and `/data/<slug>/private.pem` |
@@ -99,7 +101,24 @@ bash deploy.sh \
   --dry-run
 ```
 
-## Private repositories
+## Deploying from GitHub Actions (recommended)
+
+The runner already has the code, so package it there and copy it to the server with `--source`. The server never needs access to GitHub, so private repositories need no token:
+
+```yaml
+- name: Package app
+  run: git archive --format=tar.gz -o app.tar.gz HEAD
+
+- name: Copy app to server
+  run: scp app.tar.gz user@server:/tmp/kickstand.tar.gz
+
+- name: Deploy
+  run: ssh user@server "curl -fsSL https://raw.githubusercontent.com/massyn/flask-deploy/main/deploy.sh | sudo bash -s -- --slug kickstand --domain kickstand.example.com --source /tmp/kickstand.tar.gz"
+```
+
+`git archive` includes committed files only, so `.git`, `venv/` and `.env` stay out of the archive. On each deploy, everything in `/opt/<slug>/` except `venv/` and `.env` is replaced by the archive's contents, so files deleted from the repo are removed from the server too. An app first deployed with `--repo` can switch to `--source` at any time; its git clone is cleared on the first `--source` deploy.
+
+## Private repositories with `--repo`
 
 Private GitHub repositories are supported by embedding a Personal Access Token (PAT) in the `--repo` URL:
 
@@ -133,7 +152,7 @@ The PAT needs only the minimum required scope: **Contents: Read-only** (classic 
 
 | Path | Purpose |
 |------|---------|
-| `/opt/<slug>/` | Git clone of the repository — disposable, never back this up |
+| `/opt/<slug>/` | App code (unpacked `--source` archive or `--repo` clone) — disposable, never back this up |
 | `/data/<slug>/` | Stateful data — SQLite databases, `.env` files — **back this up** |
 | `/var/log/<slug>/` | Logs — `access.log`, `error.log` (gunicorn), `nginx.access.log`, `nginx.error.log` |
 
