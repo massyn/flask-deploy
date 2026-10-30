@@ -1,2 +1,2 @@
-INSERT INTO users (google_id, name, email)
-VALUES ({% if dialect == 'sqlite' %}?, ?, ?{% else %}%s, %s, %s{% endif %})
+INSERT INTO users (google_id, name, email, passkey_handle)
+VALUES ({% if dialect == 'sqlite' %}?, ?, ?, ?{% else %}%s, %s, %s, %s{% endif %})

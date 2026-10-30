@@ -443,9 +443,11 @@ my-app/
     db.py                 # DB connection + SQL template rendering
     main.py               # Main blueprint (public routes)
     auth/
-      __init__.py         # Blueprint + OAuth routes
+      __init__.py         # Blueprint + OAuth routes + establish_session / after_login_url
       service.py          # User lookup/creation + get_remote_ip + get_oauth_redirect_uri
       decorators.py       # login_required etc.
+      passkeys.py         # WebAuthn ceremonies: register, authenticate, list, delete
+      passkey_routes.py   # Passkey sign-up, sign-in and management routes on the auth blueprint
 ```
 
 ---
@@ -583,7 +585,7 @@ When adding Google OAuth to a new project, copy the auth package from this repo.
 | [`app/auth/__init__.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/__init__.py) | Blueprint, OAuth routes, login / google / callback / logout / test-callback |
 | [`app/auth/service.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/service.py) | `find_or_create_user`, `get_oauth_redirect_uri`, `get_remote_ip` |
 | [`app/auth/decorators.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/decorators.py) | `login_required` decorator |
-| [`templates/login.html`](https://github.com/massyn/flask-deploy/blob/main/templates/login.html) | Login page — renders "Login with Google" button |
+| [`templates/login.html`](https://github.com/massyn/flask-deploy/blob/main/templates/login.html) | Login page - "Login with Google" and "Login with a passkey" buttons |
 
 After copying, update the import paths from `app.*` to match the target project's package name.
 
@@ -598,11 +600,16 @@ The login flow is split into two routes:
 | `GET /auth/callback` | Handles the OAuth callback from Google. |
 | `GET /auth/logout` | Clears the session and redirects home. |
 
+Every sign-in method ends the same way: `establish_session(user)` puts the user in the session, and
+the route redirects to `after_login_url()`. Change `after_login_url()`, not each route, when sign-in
+must land somewhere other than home (the flask-mcp consent page, for example).
+
 ### Navbar auth section
 
 When unauthenticated, show a `🔑 Login` link pointing to `auth.login`.
 
-When authenticated, show the user's email address (falling back to name) as a Bootstrap dropdown with a `🚪 Logout` item:
+When authenticated, show the user's email address (falling back to name) as a Bootstrap dropdown with
+`🔐 Passkeys` and `🚪 Logout` items:
 
 ```html
 {% if session.get('user') %}
@@ -612,6 +619,7 @@ When authenticated, show the user's email address (falling back to name) as a Bo
         👤 {{ session['user']['email'] or session['user']['name'] }}
     </a>
     <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
+        <li><a class="dropdown-item" href="{{ url_for('auth.passkey_list') }}">🔐 Passkeys</a></li>
         <li><a class="dropdown-item" href="{{ url_for('auth.logout') }}">🚪 Logout</a></li>
     </ul>
 </li>
@@ -621,6 +629,74 @@ When authenticated, show the user's email address (falling back to name) as a Bo
 </li>
 {% endif %}
 ```
+
+---
+
+## Passkeys - reference implementation
+
+Passkeys (WebAuthn, via the [`webauthn`](https://pypi.org/project/webauthn/) package) sit beside
+Google sign-in. A user can create an account with a passkey alone, with no Google account and no
+email address, and a signed-in user can add passkeys from the `🔐 Passkeys` page. Copy these files
+rather than rewriting them:
+
+| File | Purpose |
+|------|---------|
+| [`app/auth/passkeys.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/passkeys.py) | Registration and authentication ceremonies, listing and deleting passkeys, `PasskeyError` |
+| [`app/auth/passkey_routes.py`](https://github.com/massyn/flask-deploy/blob/main/app/auth/passkey_routes.py) | Routes, registered on the auth blueprint by the import at the foot of `app/auth/__init__.py` |
+| [`static/js/passkeys.js`](https://github.com/massyn/flask-deploy/blob/main/static/js/passkeys.js) | Drives any `<button data-passkey="login">` or `data-passkey="register"` button on the page |
+| [`static/js/csrf.js`](https://github.com/massyn/flask-deploy/blob/main/static/js/csrf.js) | `postJSON()` - POSTs JSON with the CSRF token (see CSRF protection) |
+| [`templates/passkey_signup.html`](https://github.com/massyn/flask-deploy/blob/main/templates/passkey_signup.html) | Create an account with a passkey: asks for a name only |
+| [`templates/passkeys.html`](https://github.com/massyn/flask-deploy/blob/main/templates/passkeys.html) | List, add and remove the signed-in user's passkeys |
+| `templates/sql/passkey_*.sql`, `user_by_id.sql`, `user_by_passkey_handle.sql`, `user_passkey_handle.sql`, `user_sign_in_methods.sql` | Queries |
+
+| Route | Purpose |
+|-------|---------|
+| `GET /auth/passkey/signup` | Sign-up page for a new, passkey-only user |
+| `POST /auth/passkey/register/options` | Creation options. Signed in: for this user. Signed out: for a new user named in the JSON body |
+| `POST /auth/passkey/register` | Verifies and stores the passkey; creates and signs in the user if new |
+| `POST /auth/passkey/login/options` | Sign-in options with a fresh challenge |
+| `POST /auth/passkey/login` | Verifies the signature and signs the user in |
+| `GET /auth/passkeys` | Manage passkeys (login required) |
+| `POST /auth/passkey/<id>/delete` | Removes a passkey, after a Bootstrap modal confirm |
+
+### How it works
+
+- **Two steps per ceremony.** The server sends options with a fresh challenge, the browser asks the
+  device to create or use a passkey, and the server verifies the reply. The challenge waits in the
+  session between the steps and is popped, so a reply can't be replayed.
+- **Discoverable credentials.** Passkeys are created with `resident_key=REQUIRED`, so sign-in needs no
+  username: the device offers the passkeys it holds for the site.
+- **User handle.** Each user has a random `users.passkey_handle` (`secrets.token_urlsafe(32)`), set
+  when the user is created. It is the WebAuthn user id stored on their devices, so the database id
+  never leaves the server. Sign-in checks the handle the device returns against the stored one.
+- **Schema.** `users.google_id` is nullable (passkey-only users have none) and `users.passkey_handle`
+  is `UNIQUE NOT NULL`. `passkeys` holds `credential_id` and `public_key` (both base64url),
+  `sign_count`, `created_on` and `last_used`. Only public keys are stored.
+- **Atomic sign-up.** The new user and their first passkey are inserted in one transaction with
+  `execute_batch()` in `db.py`; `passkey_insert.sql` finds the user by `passkey_handle`.
+- **No lock-out.** A user without a Google account cannot remove their last passkey.
+- **Sign-in completes like Google's:** `establish_session(user)`, then `after_login_url()`.
+
+### Relying party
+
+Passkeys belong to a domain, the relying party id, and only work on pages served from it or its
+subdomains:
+
+- `PASSKEY_RP_ID` sets it. Unset, it is the first `APP_HOSTNAME`, or in development the host the page
+  was loaded from. If `APP_HOSTNAME` lists `www.example.com` first and also `example.com`, set
+  `PASSKEY_RP_ID=example.com` so both hosts can use the passkeys.
+- Allowed origins are `https://<host>` for every `APP_HOSTNAME`. Browsers only allow WebAuthn over
+  HTTPS, or on `http://localhost` in development (not `127.0.0.1`: the relying party must be a name).
+- **Changing `PASSKEY_RP_ID` later orphans every passkey already created.** Pick it before go-live.
+- `PASSKEY_RP_NAME` is the name the device shows when a passkey is created.
+
+### Adding passkeys to an existing app
+
+An app built from an older copy of this template has `users.google_id NOT NULL` and no
+`passkey_handle`. Before copying the files above, migrate at startup: SQLite cannot drop `NOT NULL`
+in place, so rebuild the `users` table (create the new table, copy the rows, drop the old one, rename)
+with foreign keys off, and give every existing user a random `passkey_handle`. Postgres can
+`ALTER TABLE users ALTER COLUMN google_id DROP NOT NULL` and add the column directly.
 
 ---
 
@@ -644,10 +720,16 @@ Every POST form in a template must include the token:
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 ```
 
-AJAX requests must send the token in a header:
+Page scripts that POST use `postJSON(url, body)` from `static/js/csrf.js`. It sends the token from
+the `csrf-token` meta tag in `base.html` as the `X-CSRFToken` header and resolves to
+`{ ok, status, data }`:
+
+```html
+<meta name="csrf-token" content="{{ csrf_token() }}">
+```
 
 ```javascript
-headers: { 'X-CSRFToken': document.querySelector('[name=csrf_token]').value }
+const result = await postJSON(url, { name });
 ```
 
 To exempt a specific route (e.g. a webhook endpoint):
@@ -742,6 +824,8 @@ GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 FORCE_HTTPS=true   # set to true for non-Cloudflare HTTPS deployments; omit if behind Cloudflare or local dev
 VERSION=1.0.0
+# PASSKEY_RP_ID=myapp.example.com  # domain passkeys belong to; defaults to the first APP_HOSTNAME
+# PASSKEY_RP_NAME=My App           # name shown when a user creates a passkey
 # FLASK_PORT=5000  # assign a unique dev port per app — see port registry above. Omit in production.
 # TEST_USER=alice  # bypass Google OAuth in local dev
 # FLASK_DEBUG=True  # enables debug mode and disables SESSION_COOKIE_SECURE — local dev only
