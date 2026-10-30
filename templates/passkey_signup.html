@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Create an account{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-sm-8 col-md-6 col-lg-5">
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                <h4 class="card-title mb-2">🔐 Create an account with a passkey</h4>
+                <p class="text-muted">
+                    A passkey signs you in with your face, fingerprint or screen lock. There's no password and
+                    no email address: your passkey is your account.
+                </p>
+                <form>
+                    <label class="form-label" for="passkey-name">Your name</label>
+                    <input type="text" class="form-control mb-4" id="passkey-name" name="name" required
+                           maxlength="{{ name_max_length }}" autocomplete="name">
+                    <button type="submit" class="btn btn-primary btn-lg w-100" data-passkey="register"
+                            data-options-url="{{ url_for('auth.passkey_register_options') }}"
+                            data-verify-url="{{ url_for('auth.passkey_register') }}">
+                        Create my passkey
+                    </button>
+                </form>
+                <p class="small text-danger mt-3 mb-0" data-passkey-status role="alert" hidden></p>
+                <p class="small text-muted mt-4 mb-0">
+                    Keep your passkey safe: if you lose every device that holds it, you can't get back in.
+                    Passkeys saved to iCloud Keychain or Google Password Manager follow you to new devices, and
+                    you can add a second passkey once you're signed in.
+                </p>
+                <p class="small text-muted mt-3 mb-0">
+                    Already have an account? <a href="{{ url_for('auth.login') }}">Login</a>.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/csrf.js') }}"></script>
+<script src="{{ url_for('static', filename='js/passkeys.js') }}"></script>
+{% endblock %}

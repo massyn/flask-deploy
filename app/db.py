@@ -51,9 +51,33 @@ def execute(template_name: str, params: tuple = ()) -> None:
     conn.commit()
 
 
+def execute_batch(statements: list[tuple[str, tuple]]) -> None:
+    """Run (template_name, params) statements in one transaction: all apply or none do."""
+    conn, dialect = get_db()
+    cur = conn.cursor()
+    try:
+        for template_name, params in statements:
+            cur.execute(render_sql(template_name, dialect), params)
+    except Exception:
+        conn.rollback()
+        raise
+    conn.commit()
+
+
+# Run in order at startup; a file may hold several statements.
+SCHEMA_FILES = ('schema.sql',)
+
+
 def init_db(app) -> None:
     with app.app_context():
         conn, dialect = get_db()
-        sql = render_sql('schema.sql', dialect)
-        conn.cursor().execute(sql)
+        for template in SCHEMA_FILES:
+            sql = render_sql(template, dialect)
+            if dialect == 'sqlite':
+                conn.executescript(sql)
+            else:
+                cur = conn.cursor()
+                for stmt in sql.split(';'):
+                    if stmt.strip():
+                        cur.execute(stmt)
         conn.commit()

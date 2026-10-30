@@ -1,3 +1,5 @@
+import secrets
+
 from flask import request, url_for, current_app
 from app.db import query, execute
 
@@ -33,5 +35,10 @@ def find_or_create_user(google_id: str, name: str, email: str) -> dict:
     rows = query('user_by_google_id.sql', (google_id,))
     if rows:
         return rows[0]
-    execute('user_insert.sql', (google_id, name, email))
+    execute('user_insert.sql', (google_id, name, email, new_passkey_handle()))
     return query('user_by_google_id.sql', (google_id,))[0]
+
+
+def new_passkey_handle() -> str:
+    # The WebAuthn user handle: random, so the user's id is never stored on their devices.
+    return secrets.token_urlsafe(32)

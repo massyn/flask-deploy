@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}Passkeys{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 col-lg-6">
+        <h1 class="h3 mb-2">🔐 Passkeys</h1>
+        <p class="text-muted">Sign in with your face, fingerprint or screen lock instead of a password.</p>
+
+        {% if passkeys %}
+        <ul class="list-group mb-3">
+            {% for p in passkeys %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="fw-semibold">Passkey {{ loop.index }}</div>
+                    <div class="small text-muted">
+                        Added {{ p.created_on }}{% if p.last_used %} · last used {{ p.last_used }}{% endif %}
+                    </div>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-danger" data-bs-toggle="modal"
+                        data-bs-target="#remove-passkey-{{ p.id }}">Remove</button>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p>You have no passkeys yet.</p>
+        {% endif %}
+
+        <button type="button" class="btn btn-primary" data-passkey="register"
+                data-options-url="{{ url_for('auth.passkey_register_options') }}"
+                data-verify-url="{{ url_for('auth.passkey_register') }}">
+            Create a passkey
+        </button>
+        <p class="small text-danger mt-2 mb-0" data-passkey-status role="alert" hidden></p>
+    </div>
+</div>
+
+{% for p in passkeys %}
+<div class="modal fade" id="remove-passkey-{{ p.id }}" tabindex="-1" aria-labelledby="remove-passkey-{{ p.id }}-title" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="remove-passkey-{{ p.id }}-title">Remove passkey {{ loop.index }}?</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                The device that holds it won't be able to sign you in any more.
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form method="post" action="{{ url_for('auth.passkey_delete', passkey_id=p.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-danger">Remove</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/csrf.js') }}"></script>
+<script src="{{ url_for('static', filename='js/passkeys.js') }}"></script>
+{% endblock %}

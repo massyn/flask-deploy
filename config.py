@@ -19,6 +19,10 @@ class Config:
     APP_HOSTNAMES = [
         h.strip() for h in os.environ.get('APP_HOSTNAME', '').split(',') if h.strip()
     ]
+    # Passkeys belong to this domain (it also covers its subdomains, such as www). Unset, the first
+    # APP_HOSTNAME is used, or in development the host the page was loaded from.
+    PASSKEY_RP_ID = os.environ.get('PASSKEY_RP_ID', '')
+    PASSKEY_RP_NAME = os.environ.get('PASSKEY_RP_NAME', 'Flask App')
     SESSION_COOKIE_SECURE = os.environ.get('FLASK_DEBUG', 'False').lower() != 'true'
     VERSION = os.environ.get('VERSION', '')
     GTAG_ID = os.environ.get('GTAG_ID', '')

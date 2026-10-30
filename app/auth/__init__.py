@@ -31,12 +31,9 @@ def google():
 def callback():
     token = oauth.google.authorize_access_token()
     info = token.get('userinfo', {})
-    _establish_session(
-        google_id=info['sub'],
-        name=info.get('name', ''),
-        email=info.get('email', ''),
-    )
-    return redirect(url_for('main.index'))
+    from app.auth.service import find_or_create_user
+    establish_session(find_or_create_user(info['sub'], info.get('name', ''), info.get('email', '')))
+    return redirect(after_login_url())
 
 
 @bp.route('/test-callback')
@@ -44,12 +41,9 @@ def test_callback():
     test_user = current_app.config.get('TEST_USER', '')
     if not test_user:
         return redirect(url_for('auth.login'))
-    _establish_session(
-        google_id=f'test:{test_user}',
-        name=test_user,
-        email='',
-    )
-    return redirect(url_for('main.index'))
+    from app.auth.service import find_or_create_user
+    establish_session(find_or_create_user(f'test:{test_user}', test_user, ''))
+    return redirect(after_login_url())
 
 
 @bp.route('/logout')
@@ -58,12 +52,18 @@ def logout():
     return redirect(url_for('main.index'))
 
 
-def _establish_session(google_id: str, name: str, email: str) -> None:
-    from app.auth.service import find_or_create_user
-    user = find_or_create_user(google_id, name, email)
+def establish_session(user: dict) -> None:
+    """Start the user's session once a sign-in method has proven who they are."""
     session.permanent = True
     session['user'] = {
         'id': user['id'],
         'name': user['name'],
         'email': user.get('email', ''),
     }
+
+
+def after_login_url() -> str:
+    return url_for('main.index')
+
+
+from app.auth import passkey_routes  # noqa: E402,F401 - registers the passkey routes on bp

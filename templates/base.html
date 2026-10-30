@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {# Read by static/js/csrf.js for page scripts that POST. #}
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>{% block title %}Flask App{% endblock %}</title>
     {% if gtag_id %}
     <script async src="https://www.googletagmanager.com/gtag/js?id={{ gtag_id }}"></script>
@@ -40,6 +42,7 @@
                             👤 {{ session['user']['email'] or session['user']['name'] }}
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
+                            <li><a class="dropdown-item" href="{{ url_for('auth.passkey_list') }}">🔐 Passkeys</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('auth.logout') }}">🚪 Logout</a></li>
                         </ul>
                     </li>
