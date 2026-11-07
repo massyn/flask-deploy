@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy.sh — self-contained Flask/Gunicorn/Nginx deployment
-# Ubuntu/Debian only. Idempotent — safe to re-run against the same slug.
+# Ubuntu/Debian and Amazon Linux 2023. Idempotent — safe to re-run against the same slug.
 set -eo pipefail
 
 # ============================================================
@@ -66,7 +66,6 @@ APP_DIR="/opt/${SLUG}"
 DATA_DIR="/data/${SLUG}"
 LOG_DIR="/var/log/${SLUG}"
 VENV="${APP_DIR}/venv"
-SLUG_CONF="/etc/nginx/sites-available/${SLUG}.conf"
 
 # ============================================================
 # Dry-run mode — validate repo, no server changes
@@ -159,27 +158,57 @@ fi
 # Prerequisites
 # ============================================================
 
-if ! command -v apt-get &>/dev/null; then
-    echo "Error: apt-get not found — Ubuntu/Debian required."
-    exit 1
-fi
+# Everything that differs between operating systems is set here; the rest of
+# the script only uses these values.
+[[ -f /etc/os-release ]] || { echo "Error: /etc/os-release not found — cannot detect the OS."; exit 1; }
+. /etc/os-release
+
+case " ${ID} ${ID_LIKE:-} " in
+    *" debian "*|*" ubuntu "*)
+        PKG_INSTALL="apt-get install -y -q"
+        PYTHON=python3
+        # Debian splits venv support out of python3; installed only if ensurepip is missing.
+        PYTHON_PKGS="python$(python3 -c 'import sys; print("{}.{}".format(*sys.version_info[:2]))')-venv"
+        HTPASSWD_PKG=apache2-utils
+        SVC_USER=www-data
+        NGINX_CONF_DIR=/etc/nginx/sites-available
+        NGINX_ENABLED_DIR=/etc/nginx/sites-enabled
+        ;;
+    *" amzn "*)
+        [[ "${VERSION_ID}" == "2023" ]] || { echo "Error: Amazon Linux ${VERSION_ID} is not supported — Amazon Linux 2023 required."; exit 1; }
+        PKG_INSTALL="dnf install -y -q"
+        # The system python3 on AL2023 is 3.9; apps need a newer one alongside it.
+        PYTHON=python3.12
+        PYTHON_PKGS="python3.12 python3.12-pip"
+        HTPASSWD_PKG=httpd-tools
+        SVC_USER=nginx
+        # AL2023's nginx.conf includes conf.d/*.conf directly; there is no sites-enabled.
+        NGINX_CONF_DIR=/etc/nginx/conf.d
+        NGINX_ENABLED_DIR=""
+        ;;
+    *)
+        echo "Error: unsupported OS '${PRETTY_NAME:-$ID}' — Ubuntu/Debian or Amazon Linux 2023 required."
+        exit 1
+        ;;
+esac
+
+SLUG_CONF="${NGINX_CONF_DIR}/${SLUG}.conf"
 
 if ! command -v nginx &>/dev/null; then
     echo "Installing nginx..."
-    sudo apt-get install -y -q nginx
+    sudo $PKG_INSTALL nginx
 fi
 sudo systemctl enable nginx
 sudo systemctl start nginx 2>/dev/null || true
 
-PYTHON_VER=$(python3 -c "import sys; print('{}.{}'.format(sys.version_info.major, sys.version_info.minor))")
-if ! python3 -c "import ensurepip" 2>/dev/null; then
-    echo "Installing python${PYTHON_VER}-venv..."
-    sudo apt-get install -y -q "python${PYTHON_VER}-venv"
+if ! command -v "$PYTHON" &>/dev/null || ! "$PYTHON" -c "import ensurepip" 2>/dev/null; then
+    echo "Installing ${PYTHON_PKGS}..."
+    sudo $PKG_INSTALL $PYTHON_PKGS
 fi
 
 if [[ -n "$PASS" ]] && ! command -v htpasswd &>/dev/null; then
-    echo "Installing apache2-utils..."
-    sudo apt-get install -y -q apache2-utils
+    echo "Installing ${HTPASSWD_PKG}..."
+    sudo $PKG_INSTALL "$HTPASSWD_PKG"
 fi
 
 # ============================================================
@@ -201,7 +230,7 @@ if [[ -z "$PORT" ]]; then
         if [[ -n "$p" ]] && (( p > HIGHEST )); then
             HIGHEST=$p
         fi
-    done < <(find /etc/nginx/sites-available -name '*.conf' -print0 2>/dev/null)
+    done < <(find "$NGINX_CONF_DIR" -name '*.conf' -print0 2>/dev/null)
     PORT=$(( HIGHEST + 1 ))
 fi
 
@@ -212,7 +241,7 @@ echo "Port: ${PORT} (internal, localhost only)"
 # ============================================================
 
 sudo mkdir -p "$DATA_DIR" "$LOG_DIR"
-sudo chown -R www-data:www-data "$DATA_DIR" "$LOG_DIR"
+sudo chown -R "${SVC_USER}:${SVC_USER}" "$DATA_DIR" "$LOG_DIR"
 
 # ============================================================
 # App code: unpack --source, or git clone / pull --repo
@@ -268,14 +297,14 @@ fi
 
 if [[ ! -f "${VENV}/bin/pip" ]]; then
     [[ -d "$VENV" ]] && sudo rm -rf "$VENV"
-    sudo python3 -m venv "$VENV"
+    sudo "$PYTHON" -m venv "$VENV"
 fi
 
 sudo "${VENV}/bin/pip" install --quiet --upgrade pip
 sudo "${VENV}/bin/pip" install --quiet -r "${APP_DIR}/requirements.txt"
 
-# Allow www-data to read and execute the app directory
-sudo chown -R www-data:www-data "$APP_DIR"
+# Allow the service user to read and execute the app directory
+sudo chown -R "${SVC_USER}:${SVC_USER}" "$APP_DIR"
 
 # ============================================================
 # HTTP basic auth
@@ -338,7 +367,7 @@ Description=Gunicorn — ${SLUG}
 After=network.target
 
 [Service]
-User=www-data
+User=${SVC_USER}
 WorkingDirectory=${APP_DIR}
 Environment=PATH=${VENV}/bin
 ExecStart=${VENV}/bin/gunicorn -c gunicorn_config.py run:app
@@ -364,7 +393,7 @@ if [[ "$SSL" == "true" ]]; then
             -keyout "$KEY" \
             -out "$CERT" \
             -subj "/CN=localhost" 2>/dev/null
-        sudo chown www-data:www-data "$CERT" "$KEY"
+        sudo chown "${SVC_USER}:${SVC_USER}" "$CERT" "$KEY"
         sudo chmod 640 "$KEY"
         echo "[!] WARNING: Self-signed certificate generated."
         echo "    Replace /data/${SLUG}/public.pem and /data/${SLUG}/private.pem"
@@ -433,15 +462,17 @@ server {
 NGINX_CONF
 fi
 
-sudo ln -sf "$SLUG_CONF" "/etc/nginx/sites-enabled/${SLUG}.conf"
+if [[ -n "$NGINX_ENABLED_DIR" ]]; then
+    sudo ln -sf "$SLUG_CONF" "${NGINX_ENABLED_DIR}/${SLUG}.conf"
+fi
 
 # ============================================================
 # Start services
 # ============================================================
 
-WWWDATA_HOME=$(getent passwd www-data | cut -d: -f6)
-sudo mkdir -p "${WWWDATA_HOME}/.gunicorn"
-sudo chown www-data:www-data "${WWWDATA_HOME}/.gunicorn"
+SVC_HOME=$(getent passwd "$SVC_USER" | cut -d: -f6)
+sudo mkdir -p "${SVC_HOME}/.gunicorn"
+sudo chown "${SVC_USER}:${SVC_USER}" "${SVC_HOME}/.gunicorn"
 
 sudo systemctl daemon-reload
 sudo systemctl enable "${SLUG}.service"
